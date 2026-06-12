@@ -917,3 +917,99 @@
     padding-block: 2rem 3rem;
   }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+.contact-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.25rem;
+}
+
+.contact-card {
+  padding: 1.5rem 1.75rem;
+}
+
+.contact-card--wide {
+  grid-column: 1 / -1;
+}
+
+.contact-card__head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.75rem;
+}
+
+.contact-card__icon {
+  display: inline-flex;
+  color: #7c83ff;
+}
+
+.contact-card__title {
+  font-size: 1.05rem;
+  font-weight: 700;
+  margin: 0;
+}
+
+.contact-card__values {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.contact-card__value {
+  color: var(--muted, #9aa3b2);
+  text-decoration: none;
+}
+
+.contact-card__value:hover {
+  color: #fff;
+}
+
+@media (max-width: 640px) {
+  .contact-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+.footer__copy {
+  margin-top: 0.75rem;
+  color: var(--muted, #9aa3b2);
+  font-size: 0.9rem;
+}

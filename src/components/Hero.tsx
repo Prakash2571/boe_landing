@@ -14,7 +14,7 @@ export default function Hero() {
             Understand money and manage it smarter.
           </h1>
           <p className="hero__lead">
-            Practical finance courses and premium money insights that help you
+            Practical finance courses and premium insights that help you
             budget, save, handle debt and credit, and follow financial news
             without the jargon.
           </p>

@@ -19,8 +19,8 @@ export const termsPolicy: LegalPolicy = {
     {
       heading: '1. Introduction',
       body: [
-        'These Terms and Conditions ("Terms") govern your access to and use of the BeOnEdge website, courses, and services (collectively, the "Services"). By accessing or using our Services, you agree to be bound by these Terms. If you do not agree, please do not use our Services.',
-        'BeOnEdge provides financial education and learning resources. We do not provide investment advice, brokerage services, or access to financial markets.',
+        "These Terms & Conditions constitute a legally binding agreement between the user and BEONEDGE LLP.",
+        'BEONEDGE provides financial education and learning resources. We do not provide investment advice, brokerage services, or access to financial markets.',
       ],
     },
     {
@@ -83,7 +83,7 @@ export const termsPolicy: LegalPolicy = {
       heading: '9. Governing Law and Disputes',
       body: [
         'These Terms are governed by the laws of India. Any dispute arising from these Terms shall be subject to the exclusive jurisdiction of the courts in Bengaluru, Karnataka.',
-        'Before initiating any legal proceedings, you agree to attempt to resolve the dispute informally by contacting us at learn@beonedge.in.',
+        'Before initiating any legal proceedings, you agree to attempt to resolve the dispute informally by contacting us at support@beonedge.in.',
       ],
     },
     {
@@ -96,7 +96,7 @@ export const termsPolicy: LegalPolicy = {
     {
       heading: '11. Contact',
       body: [
-        'For questions about these Terms, please contact us at learn@beonedge.in.',
+        'For questions about these Terms, please contact us at support@beonedge.in.',
       ],
     },
   ],
@@ -109,7 +109,9 @@ export const privacyPolicy: LegalPolicy = {
     {
       heading: '1. Introduction',
       body: [
-        'BeOnEdge ("we", "us", "our") respects your privacy and is committed to protecting your personal data. This Privacy Policy explains how we collect, use, store, and safeguard your information when you use our website and services.',
+
+         "BEONEDGE LLP respects your privacy and is committed to protecting your personal information." ,              
+       
         'By using our Services, you consent to the practices described in this Privacy Policy.',
       ],
     },
@@ -157,7 +159,7 @@ export const privacyPolicy: LegalPolicy = {
       heading: '7. Your Rights',
       body: [
         'You have the right to access, correct, update, or delete your personal data. You may also request a copy of the data we hold about you.',
-        'To exercise these rights, contact us at learn@beonedge.in. We will respond within 30 days of receiving a verifiable request.',
+        'To exercise these rights, contact us at support@beonedge.in. We will respond within 30 days of receiving a verifiable request.',
         'You may also withdraw consent for certain data processing activities, though this may limit your ability to use some features.',
       ],
     },
@@ -176,7 +178,7 @@ export const privacyPolicy: LegalPolicy = {
     {
       heading: '10. Contact',
       body: [
-        'If you have any questions or concerns about this Privacy Policy or our data practices, please contact us at learn@beonedge.in.',
+        'If you have any questions or concerns about this Privacy Policy or our data practices, please contact us at support@beonedge.in.',
       ],
     },
   ],
@@ -189,14 +191,16 @@ export const refundPolicy: LegalPolicy = {
     {
       heading: '1. Scope',
       body: [
-        'This policy applies to all course purchases, membership subscriptions, and learning bundles bought through the BeOnEdge platform.',
+         "All refund and cancellation requests relating to services offered by BEONEDGE LLP shall be governed by this policy." ,
+
+        
       ],
     },
     {
       heading: '2. Course Refunds',
       body: [
         'Individual courses are eligible for a full refund within 7 days of purchase, provided you have not completed more than 25% of the course content.',
-        'To request a refund, contact us at learn@beonedge.in with your order details. Refunds are processed to the original payment method within 7–10 business days.',
+        'To request a refund, contact us at support@beonedge.in with your order details. Refunds are processed to the original payment method within 7–10 business days.',
         'Bundles and special promotions may have different refund terms, which will be clearly stated at the time of purchase.',
       ],
     },
@@ -216,7 +220,7 @@ export const refundPolicy: LegalPolicy = {
     {
       heading: '5. How to Request a Refund',
       body: [
-        'Email us at learn@beonedge.in with the subject line "Refund Request", including your registered email address, order ID, and reason for the request.',
+        'Email us at support@beonedge.in with the subject line "Refund Request", including your registered email address, order ID, and reason for the request.',
         'We review all refund requests within 2 business days and will notify you of the decision via email.',
       ],
     },
@@ -229,7 +233,7 @@ export const refundPolicy: LegalPolicy = {
     {
       heading: '7. Contact',
       body: [
-        'For refund-related queries, please contact us at learn@beonedge.in.',
+        'For refund-related queries, please contact us at support@beonedge.in.',
       ],
     },
   ],
@@ -242,7 +246,9 @@ export const disclaimerPolicy: LegalPolicy = {
     {
       heading: '1. Purpose of Content',
       body: [
-        'BeOnEdge provides financial education and general awareness content designed to help learners understand personal finance concepts. All content is created for educational purposes only.',
+         
+        
+        'BEONEDGE provides financial education and general awareness content designed to help learners understand personal finance concepts. All content is created for educational purposes only.',
       ],
     },
     {
@@ -268,7 +274,7 @@ export const disclaimerPolicy: LegalPolicy = {
       heading: '5. Accuracy and Updates',
       body: [
         'We strive to keep our content accurate and up to date. However, financial regulations, tax rules, and market conditions change over time. We do not guarantee that all information is current at the time you access it.',
-        'If you notice any outdated or incorrect information, please contact us at learn@beonedge.in so we can review and update it.',
+        'If you notice any outdated or incorrect information, please contact us at support@beonedge.in so we can review and update it.',
       ],
     },
     {
@@ -280,7 +286,7 @@ export const disclaimerPolicy: LegalPolicy = {
     {
       heading: '7. Contact',
       body: [
-        'If you have questions about the nature of our content or this disclaimer, please contact us at learn@beonedge.in.',
+        'If you have questions about the nature of our content or this disclaimer, please contact us at support@beonedge.in.',
       ],
     },
   ],

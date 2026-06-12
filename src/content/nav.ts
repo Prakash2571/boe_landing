@@ -8,7 +8,7 @@ export const navLinks: readonly NavLink[] = [
   { label: 'Premium', href: '/premium' },
   { label: 'News', href: '/news' },
   { label: 'Plans', href: '/plans' },
-  { label: 'About', href: '/about' },
+  { label: 'Contact Us', href: '/contact' },
 ];
 
 export const authLinks = {
