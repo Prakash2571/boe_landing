@@ -1,14 +1,14 @@
 // Trust-building content. No claims of guaranteed income, returns, wealth
 // growth, or investment performance - only learning outcomes.
 
-export type Stat = { id: string; value: string; label: string };
+// export type Stat = { id: string; value: string; label: string };
 
-export const stats: readonly Stat[] = [
-  { id: 'learners', value: '40,000+', label: 'Learners enrolled' },
-  { id: 'completions', value: '120,000+', label: 'Lessons completed' },
-  { id: 'subscribers', value: '85,000+', label: 'Newsletter subscribers' },
-  { id: 'rating', value: '4.8 / 5', label: 'Average course rating' },
-];
+// export const stats: readonly Stat[] = [
+//   { id: 'learners', value: '40,000+', label: 'Learners enrolled' },
+//   { id: 'completions', value: '120,000+', label: 'Lessons completed' },
+//   { id: 'subscribers', value: '85,000+', label: 'Newsletter subscribers' },
+//   { id: 'rating', value: '4.8 / 5', label: 'Average course rating' },
+// ];
 
 export type Testimonial = {
   id: string;

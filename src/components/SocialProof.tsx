@@ -14,14 +14,14 @@ export default function SocialProof() {
           lead={instructorNote}
         />
 
-        <div className="stats">
+        {/* <div className="stats">
           {stats.map((stat) => (
             <div key={stat.id}>
               <div className="stat__value">{stat.value}</div>
               <div className="stat__label">{stat.label}</div>
             </div>
           ))}
-        </div>
+        </div> */}
 
         <div className="grid grid--3">
           {testimonials.map((item) => (
