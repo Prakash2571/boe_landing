@@ -404,6 +404,41 @@
   color: var(--ink-soft);
   font-size: 0.95rem;
 }
+.course__desc {
+  margin-top: 0.75rem;
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+.course__topics-label {
+  margin-top: 1rem;
+  margin-bottom: 0.4rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent-strong, var(--ink));
+}
+.course__topics {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 0.35rem;
+}
+.course__topics li {
+  position: relative;
+  padding-left: 1.25rem;
+  font-size: 0.88rem;
+  color: var(--ink-soft);
+}
+.course__topics li::before {
+  content: '✓';
+  position: absolute;
+  left: 0;
+  color: var(--accent, #34d399);
+  font-weight: 700;
+}
 .card__cta {
   margin-top: 1.1rem;
   font-weight: 600;

@@ -25,6 +25,19 @@ function FeaturedCourse({ course }: { course: Course }) {
         </div>
         <h2 className="course__name" style={{ fontSize: 'clamp(1.4rem, 3vw, 2rem)' }}>{course.name}</h2>
         <p className="course__outcome">{course.outcome}</p>
+        {course.description ? (
+          <p className="course__desc">{course.description}</p>
+        ) : null}
+        {course.topics && course.topics.length > 0 ? (
+          <>
+            <p className="course__topics-label">What you&apos;ll cover</p>
+            <ul className="course__topics">
+              {course.topics.map((topic) => (
+                <li key={topic}>{topic}</li>
+              ))}
+            </ul>
+          </>
+        ) : null}
         {course.pricePaise ? (
           <p className="course__price">{formatPrice(course.pricePaise)}</p>
         ) : null}
@@ -49,6 +62,19 @@ function CourseCard({ course }: { course: Course }) {
         </div>
         <h3 className="course__name">{course.name}</h3>
         <p className="course__outcome">{course.outcome}</p>
+        {course.description ? (
+          <p className="course__desc">{course.description}</p>
+        ) : null}
+        {course.topics && course.topics.length > 0 ? (
+          <>
+            <p className="course__topics-label">What you&apos;ll cover</p>
+            <ul className="course__topics">
+              {course.topics.map((topic) => (
+                <li key={topic}>{topic}</li>
+              ))}
+            </ul>
+          </>
+        ) : null}
         {course.pricePaise ? (
           <p className="course__price">{formatPrice(course.pricePaise)}</p>
         ) : null}

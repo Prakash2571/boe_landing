@@ -6,6 +6,7 @@ export type Course = {
   format: string;
   outcome: string;
   description?: string;
+  topics?: string[];
   image?: string | null;
   pricePaise?: number | null;
   status: string;
