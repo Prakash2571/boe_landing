@@ -21,9 +21,9 @@ function optional(name: string, fallback: string): string {
 }
 
 export const serverEnv = {
-  /** Base URL of the private backend API (e.g. http://127.0.0.1:47502). Required. */
+  /** Base URL of the private backend API (e.g. http://127.0.0.1:47502). */
   backendBase(): string {
-    return required('BEO_API_BASE').replace(/\/$/, '');
+    return optional('BEO_API_BASE', 'http://127.0.0.1:47502').replace(/\/$/, '');
   },
 
   /** Shared secret injected as the x-signup-key header on signup. Required. */

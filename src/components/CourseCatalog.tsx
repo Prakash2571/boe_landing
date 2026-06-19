@@ -26,7 +26,7 @@ export default function CourseCatalog({ courses }: { courses: Course[] }) {
         ) : (
           <div className="grid grid--3">
             {courses.map((course) => (
-              <Link key={course.id} href="/signup" className="card-link">
+              <Link key={course.id} href={`/enquiry?interest=${encodeURIComponent(course.name)}`} className="card-link">
                 <Reveal as="div" className="card course stagger-item">
                   {course.image ? (
                     <div className="course__media">
@@ -42,7 +42,7 @@ export default function CourseCatalog({ courses }: { courses: Course[] }) {
                   {course.pricePaise ? (
                     <p className="course__price">{formatPrice(course.pricePaise)}</p>
                   ) : null}
-                  <span className="card__cta">View details</span>
+                  <span className="card__cta">Enquire about this course</span>
                 </Reveal>
               </Link>
             ))}

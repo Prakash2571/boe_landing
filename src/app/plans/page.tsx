@@ -1,7 +1,8 @@
 import Nav from '../../components/Nav';
 import Footer from '../../components/Footer';
 import Reveal from '../../components/Reveal';
-import { fetchPlans, type Plan, formatPrice } from '../../lib/plans';
+import { type Plan, formatPrice } from '../../lib/plans';
+import { getPlansFromBackend } from '../../lib/serverCatalog';
 
 function FeaturedPlan({ plan }: { plan: Plan }) {
   return (
@@ -17,7 +18,7 @@ function FeaturedPlan({ plan }: { plan: Plan }) {
           <li key={feature}>{feature}</li>
         ))}
       </ul>
-      <a className="btn btn--primary btn--block" href="/signup">
+      <a className="btn btn--primary btn--block" href={`/enquiry?interest=${encodeURIComponent(plan.name)}`}>
         {plan.ctaLabel}
       </a>
     </Reveal>
@@ -37,7 +38,7 @@ function PlanCard({ plan }: { plan: Plan }) {
           <li key={feature}>{feature}</li>
         ))}
       </ul>
-      <a className="btn btn--ghost btn--block" href="/signup">
+      <a className="btn btn--ghost btn--block" href={`/enquiry?interest=${encodeURIComponent(plan.name)}`}>
         {plan.ctaLabel}
       </a>
     </Reveal>
@@ -48,7 +49,7 @@ export default async function PlansPage() {
   let plans: Plan[] = [];
   let error = false;
   try {
-    plans = await fetchPlans();
+    plans = await getPlansFromBackend();
   } catch {
     plans = [];
     error = true;

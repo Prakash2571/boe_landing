@@ -38,7 +38,7 @@ export default function Plans({ plans }: { plans: Plan[] }) {
                 </ul>
                 <a
                   className={`btn ${plan.featured ? 'btn--primary' : 'btn--ghost'} btn--block`}
-                  href="/signup"
+                  href={`/enquiry?interest=${encodeURIComponent(plan.name)}`}
                 >
                   {plan.ctaLabel}
                 </a>

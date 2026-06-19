@@ -2,7 +2,8 @@ import Link from 'next/link';
 import Nav from '../../components/Nav';
 import Footer from '../../components/Footer';
 import Reveal from '../../components/Reveal';
-import { fetchCourses, type Course } from '../../lib/courses';
+import { type Course } from '../../lib/courses';
+import { getCoursesFromBackend } from '../../lib/serverCatalog';
 
 function formatPrice(paise: number | null | undefined): string {
   if (paise == null) return '';
@@ -11,7 +12,7 @@ function formatPrice(paise: number | null | undefined): string {
 
 function FeaturedCourse({ course }: { course: Course }) {
   return (
-    <Link href="/signup" className="card-link">
+    <Link href={`/enquiry?interest=${encodeURIComponent(course.name)}`} className="card-link">
       <Reveal as="div" className="card course course--featured stagger-item">
         {course.image ? (
           <div className="course__media course__media--wide">
@@ -27,7 +28,7 @@ function FeaturedCourse({ course }: { course: Course }) {
         {course.pricePaise ? (
           <p className="course__price">{formatPrice(course.pricePaise)}</p>
         ) : null}
-        <span className="card__cta">View details</span>
+        <span className="card__cta">Enquire about this course</span>
       </Reveal>
     </Link>
   );
@@ -35,7 +36,7 @@ function FeaturedCourse({ course }: { course: Course }) {
 
 function CourseCard({ course }: { course: Course }) {
   return (
-    <Link href="/signup" className="card-link">
+    <Link href={`/enquiry?interest=${encodeURIComponent(course.name)}`} className="card-link">
       <Reveal as="div" className="card course stagger-item">
         {course.image ? (
           <div className="course__media">
@@ -51,7 +52,7 @@ function CourseCard({ course }: { course: Course }) {
         {course.pricePaise ? (
           <p className="course__price">{formatPrice(course.pricePaise)}</p>
         ) : null}
-        <span className="card__cta">View details</span>
+        <span className="card__cta">Enquire about this course</span>
       </Reveal>
     </Link>
   );
@@ -61,7 +62,7 @@ export default async function CoursesPage() {
   let courses: Course[] = [];
   let error = false;
   try {
-    courses = await fetchCourses();
+    courses = await getCoursesFromBackend();
   } catch {
     courses = [];
     error = true;
