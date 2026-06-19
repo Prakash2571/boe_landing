@@ -1,14 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { serverEnv } from '@/lib/env';
 
 export const runtime = 'nodejs';
-
-const BACKEND = (process.env.BEO_API_BASE || 'http://127.0.0.1:47502').replace(/\/$/, '');
 
 // Lists learner accounts for the admin dashboard. Forwards the httpOnly auth
 // cookie so the backend can verify the admin's JWT.
 export async function GET(req: NextRequest) {
   const search = req.nextUrl.search || '';
-  const upstream = await fetch(`${BACKEND}/v1/admin/users${search}`, {
+  const upstream = await fetch(`${serverEnv.backendBase()}/v1/admin/users${search}`, {
     method: 'GET',
     headers: {
       'content-type': 'application/json',

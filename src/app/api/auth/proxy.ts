@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-
-const BACKEND = (process.env.BEO_API_BASE || 'http://127.0.0.1:47502').replace(/\/$/, '');
+import { serverEnv } from '@/lib/env';
 
 type ProxyOptions = {
   isSignup?: boolean;
@@ -57,11 +56,11 @@ export async function proxyAuthPost(
   }
 
   if (options.isSignup) {
-    headers['x-signup-key'] = process.env.SIGNUP_PROXY_SECRET || '';
-    headers.origin = process.env.SIGNUP_ALLOWED_ORIGIN || req.headers.get('origin') || '';
+    headers['x-signup-key'] = serverEnv.signupProxySecret();
+    headers.origin = serverEnv.signupAllowedOrigin() || req.headers.get('origin') || '';
   }
 
-  const upstream = await fetch(`${BACKEND}/v1/auth/${authPath}`, {
+  const upstream = await fetch(`${serverEnv.backendBase()}/v1/auth/${authPath}`, {
     method: 'POST',
     headers,
     body,

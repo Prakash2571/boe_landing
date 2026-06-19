@@ -1,9 +1,8 @@
 import { NextResponse } from 'next/server';
-
-const BACKEND = (process.env.BEO_API_BASE || 'http://127.0.0.1:47502').replace(/\/$/, '');
+import { serverEnv } from '@/lib/env';
 
 export async function GET() {
-  const upstream = await fetch(`${BACKEND}/v1/public/plans`, {
+  const upstream = await fetch(`${serverEnv.backendBase()}/v1/public/plans`, {
     method: 'GET',
     headers: { 'content-type': 'application/json' },
     cache: 'no-store',

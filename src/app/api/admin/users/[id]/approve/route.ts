@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { serverEnv } from '@/lib/env';
 
 export const runtime = 'nodejs';
-
-const BACKEND = (process.env.BEO_API_BASE || 'http://127.0.0.1:47502').replace(/\/$/, '');
 
 // Approves a pending learner account. Forwards the admin's httpOnly cookie.
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const upstream = await fetch(
-    `${BACKEND}/v1/admin/users/${encodeURIComponent(params.id)}/approve`,
+    `${serverEnv.backendBase()}/v1/admin/users/${encodeURIComponent(params.id)}/approve`,
     {
       method: 'POST',
       headers: {
