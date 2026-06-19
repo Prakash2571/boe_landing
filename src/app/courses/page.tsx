@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import Nav from '../../components/Nav';
 import Footer from '../../components/Footer';
 import Reveal from '../../components/Reveal';
@@ -10,35 +11,49 @@ function formatPrice(paise: number | null | undefined): string {
 
 function FeaturedCourse({ course }: { course: Course }) {
   return (
-    <Reveal as="div" className="card course course--featured stagger-item">
-      <div className="course__meta">
-        <span className="tag">{course.level}</span>
-        <span className="tag tag--muted">{course.format}</span>
-      </div>
-      <h2 className="course__name" style={{ fontSize: 'clamp(1.4rem, 3vw, 2rem)' }}>{course.name}</h2>
-      <p className="course__outcome">{course.outcome}</p>
-      {course.pricePaise ? (
-        <p className="course__price">{formatPrice(course.pricePaise)}</p>
-      ) : null}
-      <span className="card__cta">View details</span>
-    </Reveal>
+    <Link href="/signup" className="card-link">
+      <Reveal as="div" className="card course course--featured stagger-item">
+        {course.image ? (
+          <div className="course__media course__media--wide">
+            <img src={course.image} alt={course.name} loading="lazy" />
+          </div>
+        ) : null}
+        <div className="course__meta">
+          <span className="tag">{course.level}</span>
+          <span className="tag tag--muted">{course.format}</span>
+        </div>
+        <h2 className="course__name" style={{ fontSize: 'clamp(1.4rem, 3vw, 2rem)' }}>{course.name}</h2>
+        <p className="course__outcome">{course.outcome}</p>
+        {course.pricePaise ? (
+          <p className="course__price">{formatPrice(course.pricePaise)}</p>
+        ) : null}
+        <span className="card__cta">View details</span>
+      </Reveal>
+    </Link>
   );
 }
 
 function CourseCard({ course }: { course: Course }) {
   return (
-    <Reveal as="div" className="card course stagger-item">
-      <div className="course__meta">
-        <span className="tag">{course.level}</span>
-        <span className="tag tag--muted">{course.format}</span>
-      </div>
-      <h3 className="course__name">{course.name}</h3>
-      <p className="course__outcome">{course.outcome}</p>
-      {course.pricePaise ? (
-        <p className="course__price">{formatPrice(course.pricePaise)}</p>
-      ) : null}
-      <span className="card__cta">View details</span>
-    </Reveal>
+    <Link href="/signup" className="card-link">
+      <Reveal as="div" className="card course stagger-item">
+        {course.image ? (
+          <div className="course__media">
+            <img src={course.image} alt={course.name} loading="lazy" />
+          </div>
+        ) : null}
+        <div className="course__meta">
+          <span className="tag">{course.level}</span>
+          <span className="tag tag--muted">{course.format}</span>
+        </div>
+        <h3 className="course__name">{course.name}</h3>
+        <p className="course__outcome">{course.outcome}</p>
+        {course.pricePaise ? (
+          <p className="course__price">{formatPrice(course.pricePaise)}</p>
+        ) : null}
+        <span className="card__cta">View details</span>
+      </Reveal>
+    </Link>
   );
 }
 

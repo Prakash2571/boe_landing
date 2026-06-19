@@ -30,6 +30,11 @@ export default function Nav() {
 
   const authActions = user ? (
     <>
+      {user.role === 'admin' ? (
+        <Link className="nav__signin" href="/admin">
+          Admin
+        </Link>
+      ) : null}
       <span className="nav__user">Hi {displayName(user)}</span>
       <button type="button" className="nav__logout" onClick={onLogout}>
         Log out
@@ -104,6 +109,13 @@ export default function Nav() {
                 </Link>
               )}
             </li>
+            {user && user.role === 'admin' ? (
+              <li>
+                <Link className="nav__link" href="/admin" onClick={() => setOpen(false)}>
+                  Admin
+                </Link>
+              </li>
+            ) : null}
           </ul>
           {user ? (
             <button type="button" className="btn btn--primary btn--block" onClick={onLogout}>

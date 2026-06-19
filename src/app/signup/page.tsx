@@ -1,10 +1,12 @@
 import Nav from '../../components/Nav';
 import Footer from '../../components/Footer';
 import SignupForm from '../../components/SignupForm';
+import RedirectIfAuthed from '../../components/RedirectIfAuthed';
 
 export default function SignupPage() {
   return (
     <>
+      <RedirectIfAuthed />
       <Nav />
       <main className="auth-page">
         <section className="container auth-page__inner" aria-labelledby="signup-title">
