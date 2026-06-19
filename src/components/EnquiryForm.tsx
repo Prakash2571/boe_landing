@@ -65,9 +65,12 @@ export default function EnquiryForm() {
         <input
           id="enquiry-interest"
           name="interest"
-          placeholder="e.g. Premium membership or a specific course"
+          placeholder="e.g. a specific course or plan"
           value={values.interest}
           onChange={(e) => update('interest', e.target.value)}
+          readOnly={Boolean(presetInterest)}
+          aria-readonly={Boolean(presetInterest)}
+          style={presetInterest ? { cursor: 'default', opacity: 0.85 } : undefined}
         />
       </div>
 
