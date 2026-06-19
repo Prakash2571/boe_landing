@@ -2,7 +2,7 @@ import Nav from '../../components/Nav';
 import Footer from '../../components/Footer';
 import Reveal from '../../components/Reveal';
 import { type Plan, formatPrice } from '../../lib/plans';
-import { getPlansFromBackend } from '../../lib/serverCatalog';
+import { planCatalog } from '../../content/planCatalog';
 
 function FeaturedPlan({ plan }: { plan: Plan }) {
   return (
@@ -45,15 +45,8 @@ function PlanCard({ plan }: { plan: Plan }) {
   );
 }
 
-export default async function PlansPage() {
-  let plans: Plan[] = [];
-  let error = false;
-  try {
-    plans = await getPlansFromBackend();
-  } catch {
-    plans = [];
-    error = true;
-  }
+export default function PlansPage() {
+  const plans: Plan[] = planCatalog;
 
   const featured = plans.find((p) => p.featured) || plans[0];
   const rest = plans.filter((p) => p.id !== featured?.id);
@@ -71,11 +64,7 @@ export default async function PlansPage() {
                 Start with a single course or join premium for ongoing learning, news briefings, and live sessions.
               </p>
             </div>
-            {error ? (
-              <div className="empty-state">
-                <p className="section__lead">Unable to load plans right now. Please try again later.</p>
-              </div>
-            ) : plans.length === 0 ? (
+            {plans.length === 0 ? (
               <div className="empty-state">
                 <p className="section__lead">No plans available right now. Check back soon.</p>
               </div>

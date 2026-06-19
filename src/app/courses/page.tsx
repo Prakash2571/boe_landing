@@ -3,7 +3,7 @@ import Nav from '../../components/Nav';
 import Footer from '../../components/Footer';
 import Reveal from '../../components/Reveal';
 import { type Course } from '../../lib/courses';
-import { getCoursesFromBackend } from '../../lib/serverCatalog';
+import { courseCatalog } from '../../content/courseCatalog';
 
 function formatPrice(paise: number | null | undefined): string {
   if (paise == null) return '';
@@ -84,15 +84,8 @@ function CourseCard({ course }: { course: Course }) {
   );
 }
 
-export default async function CoursesPage() {
-  let courses: Course[] = [];
-  let error = false;
-  try {
-    courses = await getCoursesFromBackend();
-  } catch {
-    courses = [];
-    error = true;
-  }
+export default function CoursesPage() {
+  const courses: Course[] = courseCatalog;
 
   const [featured, ...rest] = courses;
 
@@ -109,11 +102,7 @@ export default async function CoursesPage() {
                 Learn budgeting, saving, debt management, and financial news literacy through short, practical lessons.
               </p>
             </div>
-            {error ? (
-              <div className="empty-state">
-                <p className="section__lead">Unable to load courses right now. Please try again later.</p>
-              </div>
-            ) : courses.length === 0 ? (
+            {courses.length === 0 ? (
               <div className="empty-state">
                 <p className="section__lead">No courses available right now. Check back soon.</p>
               </div>
