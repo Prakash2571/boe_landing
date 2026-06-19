@@ -10,6 +10,13 @@ export default function AboutPage() {
         {/* About / Mission */}
         <section className="section">
           <div className="container">
+            <div className="media-banner">
+              <img
+                src="https://images.unsplash.com/photo-1521737604893-d14cc237f11d?auto=format&fit=crop&w=1200&q=80"
+                alt="Educators collaborating on finance learning content"
+                loading="eager"
+              />
+            </div>
             <div className="section__head">
               <span className="eyebrow">About {site.name}</span>
               <h1 className="section__title">Welcome to BEONEDGE LLP</h1>

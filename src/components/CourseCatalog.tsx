@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import SectionHead from './SectionHead';
 import Reveal from './Reveal';
 import { type Course } from '../lib/courses';
@@ -25,18 +26,25 @@ export default function CourseCatalog({ courses }: { courses: Course[] }) {
         ) : (
           <div className="grid grid--3">
             {courses.map((course) => (
-              <Reveal as="div" key={course.id} className="card course stagger-item">
-                <div className="course__meta">
-                  <span className="tag">{course.level}</span>
-                  <span className="tag tag--muted">{course.format}</span>
-                </div>
-                <h3 className="course__name">{course.name}</h3>
-                <p className="course__outcome">{course.outcome}</p>
-                {course.pricePaise ? (
-                  <p className="course__price">{formatPrice(course.pricePaise)}</p>
-                ) : null}
-                <span className="card__cta">View details</span>
-              </Reveal>
+              <Link key={course.id} href="/signup" className="card-link">
+                <Reveal as="div" className="card course stagger-item">
+                  {course.image ? (
+                    <div className="course__media">
+                      <img src={course.image} alt={course.name} loading="lazy" />
+                    </div>
+                  ) : null}
+                  <div className="course__meta">
+                    <span className="tag">{course.level}</span>
+                    <span className="tag tag--muted">{course.format}</span>
+                  </div>
+                  <h3 className="course__name">{course.name}</h3>
+                  <p className="course__outcome">{course.outcome}</p>
+                  {course.pricePaise ? (
+                    <p className="course__price">{formatPrice(course.pricePaise)}</p>
+                  ) : null}
+                  <span className="card__cta">View details</span>
+                </Reveal>
+              </Link>
             ))}
           </div>
         )}

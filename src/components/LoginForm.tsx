@@ -38,7 +38,9 @@ export default function LoginForm() {
     setStatus({ kind: 'submitting' });
     try {
       const user = await login(values);
-      if (user.status === 'pending_review') {
+      if (user.role === 'admin') {
+        router.push('/admin');
+      } else if (user.status === 'pending_review') {
         router.push('/pending-approval');
       } else {
         router.push('/');
