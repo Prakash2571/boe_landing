@@ -95,6 +95,14 @@ export default function HomePage() {
         </section>
         <SocialProof />
         <LeadForm />
+        <section className="disclaimer-band" aria-label="Educational disclaimer">
+          <div className="container">
+            <p className="disclaimer-band__text">
+              We are an educational platform. We do not provide SEBI-registered
+              investment advice or financial planning services.
+            </p>
+          </div>
+        </section>
       </main>
       <Footer />
     </>

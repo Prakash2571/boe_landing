@@ -1336,3 +1336,20 @@
   height: 100%;
   object-fit: cover;
 }
+
+
+/* Educational disclaimer band (landing page) */
+.disclaimer-band {
+  padding: 1.5rem 0;
+  background: var(--paper-sunken);
+  border-top: 1px solid var(--border, rgba(0, 0, 0, 0.08));
+  border-bottom: 1px solid var(--border, rgba(0, 0, 0, 0.08));
+}
+.disclaimer-band__text {
+  margin: 0 auto;
+  max-width: 52rem;
+  text-align: center;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  color: var(--ink-muted);
+}
