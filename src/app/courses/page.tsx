@@ -93,6 +93,14 @@ export default function CoursesPage() {
     <>
       <Nav />
       <main>
+        <section className="disclaimer-band" aria-label="Educational disclaimer">
+          <div className="container">
+            <p className="disclaimer-band__text">
+              We are an educational platform. We do not provide SEBI-registered
+              investment advice or financial planning services.
+            </p>
+          </div>
+        </section>
         <section className="section">
           <div className="container">
             <div className="section__head">
