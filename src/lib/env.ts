@@ -1,9 +1,9 @@
 // Server-side-only environment configuration for the landing app.
 //
-// These values are read on the server (route handlers / next.config) and are
-// NEVER shipped to the browser. Required values throw a clear error when they
-// are missing so the landing fails fast instead of silently mis-proxying to the
-// backend. Set them in `.env.local` (see `.env.example`).
+// These values are read on the server (route handlers) and are NEVER shipped to
+// the browser. Required values throw a clear error when they are missing so the
+// landing fails fast instead of silently mis-posting signups. Set them in
+// `.env.local` (see `.env.example`).
 
 function required(name: string): string {
   const value = process.env[name];
@@ -21,18 +21,27 @@ function optional(name: string, fallback: string): string {
 }
 
 export const serverEnv = {
-  /** Base URL of the private backend API (e.g. http://127.0.0.1:47502). */
-  backendBase(): string {
-    return optional('BEO_API_BASE', 'http://127.0.0.1:47502').replace(/\/$/, '');
+  /**
+   * Public base URL of the BeOnEdge app API, INCLUDING the `/api` prefix —
+   * e.g. `https://dev-app.beonedge.in/api`.
+   *
+   * That prefix matters: nginx on the app host strips `/api` before proxying, so
+   * the backend's own route is `/newuser` while the public URL is
+   * `/api/newuser`. This site is on separate infrastructure (AWS) and reaches
+   * the app stack over the public internet, so there is no private host or
+   * docker network to fall back to.
+   */
+  appApiBase(): string {
+    return required('BEO_API_BASE').replace(/\/$/, '');
   },
 
-  /** Shared secret injected as the x-signup-key header on signup. Required. */
-  signupProxySecret(): string {
-    return required('SIGNUP_PROXY_SECRET');
-  },
-
-  /** Origin used for the backend signup fallback gate. Optional (dev default). */
-  signupAllowedOrigin(): string {
-    return optional('SIGNUP_ALLOWED_ORIGIN', 'http://127.0.0.1:3110');
+  /**
+   * The shared secret this site presents as `x-signup-key` on POST /newuser.
+   * It is the ONLY thing that identifies this site to the app backend: the call
+   * is server-to-server, so there is no browser Origin the backend could trust.
+   * Required — without it every signup is refused with 401.
+   */
+  newuserSharedSecret(): string {
+    return required('NEWUSER_SHARED_SECRET');
   },
 };

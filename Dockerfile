@@ -10,9 +10,12 @@ RUN npm ci
 FROM node:22-alpine AS build
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
-# Baked into Next rewrites at build time (onboarding + /v1 passthrough).
-ARG BEO_API_BASE=http://backend:47502
-ENV BEO_API_BASE=$BEO_API_BASE
+# No build args for the backend contract on purpose.
+#
+# BEO_API_BASE and NEWUSER_SHARED_SECRET are read at REQUEST time by the route
+# handlers in src/app/api/newuser/*, not baked into the bundle. Passing them here
+# would be misleading (a build stage ENV does not reach the runtime stage below)
+# and passing a secret as a build arg would persist it in the image history.
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build
@@ -23,6 +26,12 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3100
 ENV HOSTNAME=0.0.0.0
+
+# Required at RUNTIME — supply both when starting the container:
+#   -e BEO_API_BASE=https://dev-app.beonedge.in/api
+#   -e NEWUSER_SHARED_SECRET=<same value as the app stack's .env>
+# Signup throws a clear "Missing required environment variable" if either is
+# absent, rather than silently posting nowhere.
 
 # Standalone output bundles only the traced node_modules + server.js.
 COPY --from=build /app/.next/standalone ./

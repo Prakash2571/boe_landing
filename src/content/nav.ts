@@ -1,5 +1,6 @@
-// Navigation model. Sign in / Sign up create a LEARNER account (the gateway
-// account), never described as an investment or brokerage account.
+// Navigation model. This site does not sign anyone in: the only account action
+// here is applying for access, which the app backend then verifies and an admin
+// approves. Sign-in lives in the client app, not on the marketing site.
 
 export type NavLink = { label: string; href: string };
 
@@ -12,7 +13,6 @@ export const navLinks: readonly NavLink[] = [
 ];
 
 export const authLinks = {
-  signIn: { label: 'Sign in', href: '/login' },
   signUp: { label: 'Sign up', href: '/signup' },
 } as const;
 
