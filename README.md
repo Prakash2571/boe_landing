@@ -125,21 +125,50 @@ that will not be obvious for weeks.
 **1. Certificate renewal.** A certbot certificate obtained with `--nginx` has
 `authenticator = nginx` in its renewal config, meaning renewal drives the *host*
 nginx to answer the challenge. Move nginx into a container and there is nothing
-for it to drive: renewal fails silently until the certificate expires. Switch it
-to webroot first, pointed at a directory the container serves:
+for it to drive: renewal fails silently until the certificate expires.
+
+Two traps here, both learned the hard way:
+
+- **Do this AFTER the container is up**, not before. The host nginx does not serve
+  `/.well-known/acme-challenge/` from the webroot, so a webroot challenge fails
+  while the old stack is still in place. The container's vhost does serve it, on
+  both :80 and :443.
+- **`certonly --keep-until-expiring` will not rewrite the renewal config.** If the
+  certificate is not yet due it exits with "no action taken" and leaves
+  `authenticator = nginx` in place, so it looks like it worked and nothing
+  changed. Edit the renewal file directly instead.
 
 ```bash
 sudo mkdir -p /var/www/certbot
-sudo certbot certonly --webroot -w /var/www/certbot \
-  -d beonedge.in -d www.beonedge.in \
-  --keep-until-expiring \
-  --deploy-hook 'docker compose -f /home/ubuntu/boe_landing/docker-compose.yml exec -T nginx nginx -s reload'
-sudo certbot renew --dry-run     # must pass BEFORE you rely on it
+
+# A real executable, not an inline command: certbot validates that a hook's first
+# word exists in PATH, so `--deploy-hook 'cd /x && docker compose ...'` is
+# rejected with "Unable to find deploy-hook command cd in the PATH".
+sudo tee /usr/local/bin/boe-landing-reload-nginx >/dev/null <<'EOF'
+#!/bin/sh
+set -e
+cd /home/ubuntu/boe_landing
+docker compose exec -T nginx nginx -s reload
+EOF
+sudo chmod 755 /usr/local/bin/boe-landing-reload-nginx
+
+# Point the existing certificate at webroot instead of nginx.
+sudo sed -i 's/^authenticator = nginx$/authenticator = webroot/; /^installer = nginx$/d' \
+  /etc/letsencrypt/renewal/beonedge.in.conf
+sudo tee -a /etc/letsencrypt/renewal/beonedge.in.conf >/dev/null <<'EOF'
+[[webroot_map]]
+beonedge.in = /var/www/certbot
+www.beonedge.in = /var/www/certbot
+EOF
+# also add, under [renewalparams]:
+#   webroot_path = /var/www/certbot,
+#   renew_hook = /usr/local/bin/boe-landing-reload-nginx
+
+sudo certbot renew --dry-run     # must print "all simulated renewals succeeded"
 ```
 
-`--keep-until-expiring` rewrites the renewal parameters without burning a rate
-limit on a certificate that is still valid. The deploy hook reloads the container
-so a renewed certificate is actually picked up.
+The dry-run uses the staging server and performs a real challenge, so a pass is
+genuine proof rather than a config read-through.
 
 **2. Memory.** `next build` is the peak memory moment. On a 2 GB instance with no
 swap it can be OOM-killed mid-build, which leaves a half-written `.next` and a
