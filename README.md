@@ -27,6 +27,83 @@ npm run start      # serve the production build
 npm test           # vitest unit tests
 ```
 
+## Running the whole thing with Docker
+
+The repo is self-contained: clone it, fill two values, and one command brings up
+the site behind nginx.
+
+```bash
+cp .env.example .env       # set BEO_API_BASE and NEWUSER_SHARED_SECRET
+docker compose up -d --build
+# → http://localhost
+```
+
+Two containers. `landing` is the Next.js standalone server on port 3110, and it is
+**not** published on the host — nginx is the only way in, so the rate limits and
+security headers below cannot be bypassed by hitting Next.js directly. `nginx`
+publishes 80 and 443.
+
+Compose refuses to start if either required value is missing, rather than passing
+an empty string and looking healthy until the first signup fails.
+
+```
+nginx/
+  shared.conf              http-context settings: rate-limit zones, gzip, real_ip
+  vhost-http.conf          DEFAULT — plain HTTP, no certificate needed
+  vhost-tls.conf           opt-in — nginx terminates TLS itself
+  snippets/
+    proxy-landing.conf     the proxy_pass block both vhosts share
+    security-headers.conf  CSP, frame/sniff/referrer/permissions
+    tls-params.conf        protocols, ciphers, session cache, stapling
+    acme-challenge.conf    Let's Encrypt HTTP-01 webroot
+```
+
+### Rate limits
+
+Keyed on the visitor's address, so these are per-person here — unlike the app
+backend, where the caller is one server and the budget is shared.
+
+| Path | Limit | Why |
+|---|---|---|
+| `/api/newuser`, `/api/newuser/verify-email` | 10r/m, burst 3–5 | Each accepted POST creates an application row and queues an email on the app backend |
+| `/_next/static/` | none | A cold page load legitimately fetches dozens of fingerprinted assets |
+| everything else | 30r/s, burst 60 | Normal browsing |
+
+If this site sits behind an ALB, CloudFront or Cloudflare, uncomment the matching
+`real_ip` block in `nginx/shared.conf`. Without it every visitor shares one
+bucket, because `$binary_remote_addr` will be the proxy's address.
+
+### TLS
+
+Plain HTTP is the default on purpose: nginx refuses to start if told to load a
+certificate that does not exist, which is always the case on a fresh clone. HTTP
+is also the correct shape when an ALB or CloudFront terminates TLS in front.
+
+To terminate TLS here instead:
+
+```bash
+docker compose up -d                                  # 1. site up on HTTP
+
+docker compose run --rm certbot certonly \            # 2. get a certificate
+  --webroot -w /var/www/certbot \
+  -d beonedge.in -d www.beonedge.in \
+  --email ops@beonedge.in --agree-tos --no-eff-email
+
+echo 'NGINX_VHOST=./nginx/vhost-tls.conf' >> .env     # 3. switch the vhost
+docker compose up -d --force-recreate nginx
+
+docker compose --profile tls up -d certbot            # 4. renewal loop
+```
+
+Step 3 is a file swap, not an edit — the HTTP config stays intact. The domain
+appears in `vhost-tls.conf` in three places (`server_name` plus the two
+certificate paths); if the site moves, change all three, since a mismatch is what
+produces a browser trust warning.
+
+Certificates live in a named Docker volume, not a bind mount, so private keys
+never sit in the working tree where `git add -A` or a stray `zip -r` could pick
+them up.
+
 ## The one integration with the app stack
 
 This site owns no accounts, no sessions and no database. It has exactly **one**
@@ -104,9 +181,11 @@ Two values, both server-side only, neither prefixed `NEXT_PUBLIC_`. See
 |---|---|
 | `BEO_API_BASE` | App API base **including** `/api`, e.g. `https://dev-app.beonedge.in/api`. The app host's nginx strips `/api` before proxying. |
 | `NEWUSER_SHARED_SECRET` | Must be byte-identical to `NEWUSER_SHARED_SECRET` in the app stack's `.env`, or every signup is refused with 401. `openssl rand -hex 32`. |
+| `NGINX_VHOST` | Optional. Which nginx vhost `docker compose` mounts. Defaults to `./nginx/vhost-http.conf`. |
 
-Both are read at **request time**, not build time — so the Docker image carries
-neither, and they must be supplied to the running container.
+Both required values are read at **request time**, not build time — so the Docker
+image carries neither, and they must be supplied to the running container. `.env`
+is gitignored; only `.env.example` is committed.
 
 ## Structure
 

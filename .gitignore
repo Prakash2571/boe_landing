@@ -4,5 +4,13 @@
 /build
 next-env.d.ts
 *.tsbuildinfo
-.env*.local
 .vercel
+
+# Local environment. docker-compose.yml reads .env, and it holds
+# NEWUSER_SHARED_SECRET — the app backend's only proof that a signup came from
+# this site. Ignore every .env variant and re-admit only the committed template,
+# so a new `.env.production` or `.env.local` cannot be added to a commit by
+# accident later.
+.env
+.env.*
+!.env.example

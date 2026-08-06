@@ -1,0 +1,132 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# BeOnEdge landing site — self-contained stack.
+#
+#   cp .env.example .env     # fill BEO_API_BASE + NEWUSER_SHARED_SECRET
+#   docker compose up -d --build
+#   → http://localhost
+#
+# Two containers: the Next.js site, and nginx in front of it. TLS is opt-in (see
+# nginx/vhost-tls.conf and the certbot service below) because a fresh clone has
+# no certificate, and nginx will not start if it is told to load one that is
+# missing. HTTP-only is also the correct shape when an AWS ALB or CloudFront is
+# terminating TLS ahead of this box.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: boe-landing
+
+# Applied to every long-running container. Nothing here needs to add
+# capabilities or escalate privileges, so both are dropped outright.
+x-hardening: &hardening
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  restart: unless-stopped
+
+services:
+  landing:
+    build:
+      context: .
+    image: boe-landing:local
+    container_name: boe-landing
+    <<: *hardening
+    # The image ships only compiled output; nothing needs to write to the
+    # filesystem at runtime. /tmp is a bounded tmpfs rather than a writable
+    # layer, and noexec means a dropped file there cannot be run.
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    environment:
+      # Required. Absent values make signup throw a clear startup-style error
+      # instead of silently posting nowhere — see src/lib/env.ts.
+      #
+      # `:?` makes compose refuse to start rather than pass an empty string,
+      # which would otherwise look like a working deploy until the first signup.
+      BEO_API_BASE: ${BEO_API_BASE:?set BEO_API_BASE in .env, including the /api suffix}
+      NEWUSER_SHARED_SECRET: ${NEWUSER_SHARED_SECRET:?set NEWUSER_SHARED_SECRET in .env, matching the app stack}
+      NODE_ENV: production
+      PORT: "3110"
+      HOSTNAME: 0.0.0.0
+    expose:
+      - "3110"
+    # Deliberately no `ports:`. The site is reachable only through nginx, so the
+    # rate limits and security headers cannot be bypassed by hitting the Next.js
+    # server directly on the host.
+    networks:
+      - edge
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: boe-landing-nginx
+    <<: *hardening
+    # The official nginx image starts as root, chowns its cache directories, then
+    # drops its workers to the `nginx` user — so a blanket cap_drop makes it fail
+    # to start. These four are the minimum that dance needs, added back on top of
+    # the drop-all above rather than running unrestricted:
+    #   CHOWN, SETUID, SETGID  — the entrypoint's chown and the privilege drop
+    #   NET_BIND_SERVICE       — binding 80 and 443, which are below 1024
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
+    depends_on:
+      landing:
+        # The Dockerfile defines a HEALTHCHECK, so nginx waits for the site to
+        # actually answer rather than merely for the container to exist.
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # http-context settings (rate-limit zones, gzip, real_ip) — always mounted.
+      - ./nginx/shared.conf:/etc/nginx/conf.d/00-shared.conf:ro
+      # The vhost. Defaults to plain HTTP; set NGINX_VHOST=./nginx/vhost-tls.conf
+      # in .env once a certificate exists. Switching is a file swap, not an edit,
+      # so the HTTP config stays intact and reviewable.
+      - ${NGINX_VHOST:-./nginx/vhost-http.conf}:/etc/nginx/conf.d/10-landing.conf:ro
+      - ./nginx/snippets:/etc/nginx/snippets:ro
+      - letsencrypt:/etc/letsencrypt:ro
+      - acme_challenge:/var/www/certbot:ro
+    networks:
+      - edge
+
+  # ── TLS, on demand ────────────────────────────────────────────────────────
+  # Under a profile so `docker compose up` never tries to reach Let's Encrypt.
+  # Issuance is a one-off command; renewal is the loop below.
+  #
+  #   docker compose run --rm certbot certonly --webroot -w /var/www/certbot \
+  #     -d beonedge.in -d www.beonedge.in \
+  #     --email ops@beonedge.in --agree-tos --no-eff-email
+  #
+  # Then set NGINX_VHOST=./nginx/vhost-tls.conf and recreate nginx.
+  certbot:
+    image: certbot/certbot:v2.11.0
+    container_name: boe-landing-certbot
+    profiles:
+      - tls
+    volumes:
+      - letsencrypt:/etc/letsencrypt
+      - acme_challenge:/var/www/certbot
+    # Renewal loop. Twice a day is what Let's Encrypt asks for: certbot exits
+    # immediately unless the certificate is inside its renewal window, and the
+    # random sleep keeps every deployment in the world from hitting them at the
+    # same minute.
+    entrypoint: >
+      sh -c 'trap exit TERM;
+             while :; do
+               certbot renew --webroot -w /var/www/certbot --quiet;
+               sleep $$((43200 + RANDOM % 3600)) & wait $${!};
+             done'
+    restart: unless-stopped
+
+networks:
+  edge:
+    driver: bridge
+
+volumes:
+  # Certificates and the ACME webroot are named volumes, not bind mounts: private
+  # keys then never sit in the working tree where a `git add -A` or a stray
+  # `zip -r` could pick them up.
+  letsencrypt:
+  acme_challenge:
