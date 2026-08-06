@@ -50,13 +50,25 @@ an empty string and looking healthy until the first signup fails.
 nginx/
   shared.conf              http-context settings: rate-limit zones, gzip, real_ip
   vhost-http.conf          DEFAULT — plain HTTP, no certificate needed
-  vhost-tls.conf           opt-in — nginx terminates TLS itself
+  vhost-tls.conf           nginx obtains its own cert via the certbot service
+  vhost-host-certs.conf    nginx uses certificates the HOST already manages
   snippets/
-    proxy-landing.conf     the proxy_pass block both vhosts share
+    proxy-landing.conf     the proxy_pass block every vhost shares
     security-headers.conf  CSP, frame/sniff/referrer/permissions
     tls-params.conf        protocols, ciphers, session cache, stapling
     acme-challenge.conf    Let's Encrypt HTTP-01 webroot
 ```
+
+### Cloudflare
+
+`beonedge.in` is served through Cloudflare, so `nginx/shared.conf` enables
+`real_ip` from Cloudflare's published ranges with `real_ip_header
+CF-Connecting-IP`. Without it every request arrives from a Cloudflare edge
+address and **all visitors share one rate-limit bucket**. It is harmless
+off-Cloudflare: a direct or localhost connection never matches those ranges.
+
+Cloudflare talks HTTPS to this origin, so the origin needs a working certificate
+— HTTP-only is not an option here unless the Cloudflare SSL mode is changed too.
 
 ### Rate limits
 
@@ -103,6 +115,83 @@ produces a browser trust warning.
 Certificates live in a named Docker volume, not a bind mount, so private keys
 never sit in the working tree where `git add -A` or a stray `zip -r` could pick
 them up.
+
+## Migrating a pm2 + host-nginx box to Docker
+
+If the box currently runs the site under pm2 behind a host nginx, the switch has
+three real hazards. None is hard, but skipping any one of them breaks something
+that will not be obvious for weeks.
+
+**1. Certificate renewal.** A certbot certificate obtained with `--nginx` has
+`authenticator = nginx` in its renewal config, meaning renewal drives the *host*
+nginx to answer the challenge. Move nginx into a container and there is nothing
+for it to drive: renewal fails silently until the certificate expires. Switch it
+to webroot first, pointed at a directory the container serves:
+
+```bash
+sudo mkdir -p /var/www/certbot
+sudo certbot certonly --webroot -w /var/www/certbot \
+  -d beonedge.in -d www.beonedge.in \
+  --keep-until-expiring \
+  --deploy-hook 'docker compose -f /home/ubuntu/boe_landing/docker-compose.yml exec -T nginx nginx -s reload'
+sudo certbot renew --dry-run     # must pass BEFORE you rely on it
+```
+
+`--keep-until-expiring` rewrites the renewal parameters without burning a rate
+limit on a certificate that is still valid. The deploy hook reloads the container
+so a renewed certificate is actually picked up.
+
+**2. Memory.** `next build` is the peak memory moment. On a 2 GB instance with no
+swap it can be OOM-killed mid-build, which leaves a half-written `.next` and a
+confusing failure. Add swap before building:
+
+```bash
+sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile
+sudo mkswap /swapfile && sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+```
+
+**3. Port ownership.** Host nginx holds 80/443; the container cannot bind them
+until it is stopped. Stop pm2 too, or two copies of the site compete.
+
+Then the migration itself:
+
+```bash
+cd /home/ubuntu/boe_landing
+git checkout package-lock.json          # drop local drift so the pull is clean
+git pull
+
+cat >> .env <<'EOF'
+NGINX_VHOST=./nginx/vhost-host-certs.conf
+LETSENCRYPT_SRC=/etc/letsencrypt
+ACME_WEBROOT_SRC=/var/www/certbot
+EOF
+chmod 600 .env                          # it holds NEWUSER_SHARED_SECRET
+
+pm2 delete all && pm2 save              # release :3110
+sudo systemctl disable --now nginx      # release :80 and :443
+
+docker compose up -d --build
+```
+
+Verify before walking away — a `200` on the homepage does not prove signup works,
+because the homepage never touches the app backend:
+
+```bash
+curl -sI https://beonedge.in/ | head -1
+curl -s -o /dev/null -w '%{http_code}\n' -X POST https://beonedge.in/api/newuser \
+  -H 'content-type: application/json' -d '{}'      # expect 400, NOT 502
+```
+
+A `502` there means nginx is not routing `/api/` to the app; a `503` means the
+app cannot reach `BEO_API_BASE`. Both have been live on this box before, so check
+them explicitly.
+
+### Rolling back
+
+pm2 still has the app registered until `pm2 delete`, so the fastest rollback is
+the reverse order: `docker compose down`, `sudo systemctl enable --now nginx`,
+`pm2 resurrect`.
 
 ## The one integration with the app stack
 

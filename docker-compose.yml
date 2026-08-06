@@ -86,8 +86,19 @@ services:
       # so the HTTP config stays intact and reviewable.
       - ${NGINX_VHOST:-./nginx/vhost-http.conf}:/etc/nginx/conf.d/10-landing.conf:ro
       - ./nginx/snippets:/etc/nginx/snippets:ro
-      - letsencrypt:/etc/letsencrypt:ro
-      - acme_challenge:/var/www/certbot:ro
+      # Certificates and the ACME webroot.
+      #
+      # Default: Docker-managed named volumes, written by the certbot service
+      # below — nothing on the host, nothing in the working tree.
+      #
+      # Override to host paths when the box already manages its own certificates
+      # and you do not want to reissue (see nginx/vhost-host-certs.conf):
+      #   LETSENCRYPT_SRC=/etc/letsencrypt
+      #   ACME_WEBROOT_SRC=/var/www/certbot
+      # Compose treats a value containing `/` as a bind mount and a bare name as
+      # a named volume, so the same line covers both without a second file.
+      - ${LETSENCRYPT_SRC:-letsencrypt}:/etc/letsencrypt:ro
+      - ${ACME_WEBROOT_SRC:-acme_challenge}:/var/www/certbot:ro
     networks:
       - edge
 
@@ -106,8 +117,8 @@ services:
     profiles:
       - tls
     volumes:
-      - letsencrypt:/etc/letsencrypt
-      - acme_challenge:/var/www/certbot
+      - ${LETSENCRYPT_SRC:-letsencrypt}:/etc/letsencrypt
+      - ${ACME_WEBROOT_SRC:-acme_challenge}:/var/www/certbot
     # Renewal loop. Twice a day is what Let's Encrypt asks for: certbot exits
     # immediately unless the certificate is inside its renewal window, and the
     # random sleep keeps every deployment in the world from hitting them at the
