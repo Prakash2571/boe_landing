@@ -1,9 +1,3 @@
-// Backend base (server-side only — never exposed to the browser). The lead
-// form posts to a same-origin /api/onboarding/* path which is proxied here to
-// the unchanged backend_controller endpoint, so there is no cross-origin/CORS
-// dependency and the backend host stays private.
-const BACKEND = (process.env.BEO_API_BASE || 'http://127.0.0.1:47502').replace(/\/$/, '');
-
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
@@ -11,24 +5,22 @@ const nextConfig = {
   // production Docker image. Pairs with outputFileTracingRoot below so workspace
   // hoisting does not break the trace.
   output: 'standalone',
-  // This app lives inside an npm workspace but is a standalone Next.js build.
-  // Keep its file-tracing root at the package so workspace hoisting does not
-  // confuse the build. (Top-level in Next 15+; under experimental in Next 14.)
+  // Keep file tracing rooted at this package so hoisting cannot confuse the
+  // build. (Top-level in Next 15+; under experimental in Next 14.)
   experimental: {
     outputFileTracingRoot: import.meta.dirname,
   },
-  async rewrites() {
-    return [
-      {
-        source: '/api/onboarding/:path*',
-        destination: `${BACKEND}/v1/onboarding/:path*`,
-      },
-      {
-        source: '/v1/:path*',
-        destination: `${BACKEND}/v1/:path*`,
-      },
-    ];
-  },
+
+  // No rewrites to the app backend, deliberately.
+  //
+  // There used to be two. `/api/onboarding/:path*` pointed at a backend route
+  // that no longer exists. `/v1/:path*` was worse: it republished the app's
+  // ENTIRE internal API — including `/v1/admin/*` — under this public marketing
+  // origin, bypassing the app host's own nginx rules and rate limits.
+  //
+  // Everything this site needs from the app is now two explicit route handlers,
+  // `src/app/api/newuser/*`, which forward exactly one path each and attach the
+  // signup secret server-side. A blanket proxy cannot do that safely.
 };
 
 export default nextConfig;
