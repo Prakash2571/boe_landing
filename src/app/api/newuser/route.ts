@@ -25,6 +25,31 @@ type ApiResponse = {
 
 const GENERIC_RETRY = 'We could not complete your signup. Please try again in a moment.';
 
+/**
+ * Fields the form actually renders. Upstream detail is keyed by its own schema,
+ * which also emits keys that are not inputs at all — `_root` for a whole-body
+ * problem such as an unrecognised key. Passing those through as field errors
+ * would highlight nothing, which is the dead end this mapping exists to avoid.
+ */
+const FORM_FIELDS = ['fullName', 'email', 'phone', 'password', 'acceptedConsents'] as const;
+
+function splitUpstreamFields(fields: Record<string, string[]> | null): {
+  onFields: Record<string, string>;
+  offFields: string[];
+} {
+  const onFields: Record<string, string> = {};
+  const offFields: string[] = [];
+
+  for (const [key, messages] of Object.entries(fields ?? {})) {
+    const first = messages?.[0];
+    if (!first) continue;
+    if ((FORM_FIELDS as readonly string[]).includes(key)) onFields[key] = first;
+    else offFields.push(`${key}: ${first}`);
+  }
+
+  return { onFields, offFields };
+}
+
 function json(body: ApiResponse, status: number): NextResponse {
   return NextResponse.json(body, { status });
 }
@@ -59,6 +84,28 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   });
 
   if (result.ok) {
+    /*
+     * A replay means the app recognised this exact identity from a recent
+     * submission and returned its stored answer without doing anything: no
+     * application was created or refreshed, and no email was sent. Saying "we
+     * have sent you a link" here is how someone ends up waiting for a mail that
+     * does not exist and never appears in the review queue. The key is derived
+     * from name + email + phone and lives for 24 hours, so the way forward is
+     * either the earlier email or a change to one of those details.
+     */
+    if (result.replay) {
+      return json(
+        {
+          ok: true,
+          message:
+            'We already have an application with these details from the last 24 hours. ' +
+            'Please use the confirmation link in the email we sent you then. If you did not ' +
+            'get it, contact support rather than submitting again.',
+        },
+        202,
+      );
+    }
+
     return json(
       {
         ok: true,
@@ -71,22 +118,36 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   // A rejected signup must never look successful, but it also must not leak the
   // app's internals. Each case below is one a visitor or an operator can act on.
   switch (result.code) {
-    case 'VALIDATION_FAILED':
+    case 'VALIDATION_FAILED': {
+      /*
+       * Only say "check the highlighted fields" when something is actually
+       * highlighted. Upstream detail that maps to no input — or no detail at all,
+       * which is what a dropped envelope path used to produce — has to be stated
+       * in the message instead, or the visitor is told to fix something with
+       * nothing marked and no way to know what.
+       */
+      const { onFields, offFields } = splitUpstreamFields(result.fields);
+      const highlighted = Object.keys(onFields).length > 0;
+
+      if (!highlighted) {
+        console.error(
+          `[newuser] the app rejected a signup with no usable field detail: ${
+            offFields.join('; ') || '(none supplied)'
+          }`,
+        );
+      }
+
       return json(
         {
           ok: false,
-          message: 'Please check the highlighted fields.',
-          // Flatten the app's per-field arrays to the first message each.
-          ...(result.fields
-            ? {
-                fields: Object.fromEntries(
-                  Object.entries(result.fields).map(([field, messages]) => [field, messages[0]]),
-                ),
-              }
-            : {}),
+          message: highlighted
+            ? 'Please check the highlighted fields.'
+            : 'We could not accept these details. Please check your entries and try again, or contact support if this keeps happening.',
+          ...(highlighted ? { fields: onFields } : {}),
         },
         400,
       );
+    }
 
     case 'RATE_LIMITED':
       return json(

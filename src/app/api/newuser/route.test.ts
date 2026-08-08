@@ -204,12 +204,16 @@ describe('POST /api/newuser', () => {
   });
 
   it('surfaces a breached password as a field error the visitor can act on', async () => {
+    // The real envelope shape: detail sits directly on error.fields. Reading it
+    // from error.details.fields matched nothing, so every upstream field error was
+    // dropped and the form showed "check the highlighted fields" with nothing
+    // highlighted — the exact dead end reported from production.
     fetchMock.mockResolvedValue(
       upstream(400, {
         ok: false,
         error: {
           code: 'VALIDATION_FAILED',
-          details: { fields: { password: ['this password appeared in a data breach; choose another'] } },
+          fields: { password: ['this password appeared in a data breach; choose another'] },
         },
       }),
     );
@@ -218,5 +222,85 @@ describe('POST /api/newuser', () => {
 
     expect(status).toBe(400);
     expect(payload.fields.password).toMatch(/data breach/i);
+    expect(payload.message).toMatch(/highlighted/i);
+  });
+
+  it('also accepts detail nested under error.details.fields', async () => {
+    fetchMock.mockResolvedValue(
+      upstream(400, {
+        ok: false,
+        error: {
+          code: 'VALIDATION_FAILED',
+          details: { fields: { email: ['is already in use'] } },
+        },
+      }),
+    );
+
+    const { payload } = await post(validForm);
+
+    expect(payload.fields.email).toMatch(/already in use/i);
+  });
+
+  it('never says "highlighted fields" when nothing can be highlighted', async () => {
+    // `_root` is a whole-body complaint, not an input, so it must not be passed
+    // through as a field error — there is no such box to mark.
+    fetchMock.mockResolvedValue(
+      upstream(400, {
+        ok: false,
+        error: {
+          code: 'VALIDATION_FAILED',
+          fields: { _root: ['Unrecognized key: "confirmPassword"'] },
+        },
+      }),
+    );
+
+    const { status, payload } = await post(validForm);
+
+    expect(status).toBe(400);
+    expect(payload.fields).toBeUndefined();
+    expect(payload.message).not.toMatch(/highlighted/i);
+    expect(payload.message).toMatch(/try again|contact support/i);
+  });
+
+  it('never says "highlighted fields" when the app sends no detail at all', async () => {
+    fetchMock.mockResolvedValue(
+      upstream(400, { ok: false, error: { code: 'VALIDATION_FAILED' } }),
+    );
+
+    const { payload } = await post(validForm);
+
+    expect(payload.fields).toBeUndefined();
+    expect(payload.message).not.toMatch(/highlighted/i);
+  });
+
+  it('does not claim an email was sent when the app replayed a stored answer', async () => {
+    // An idempotency replay creates nothing and sends nothing. Telling the visitor
+    // to check their inbox leaves them waiting for mail that will never arrive,
+    // with no application in the review queue either.
+    fetchMock.mockResolvedValue(
+      upstream(202, {
+        ok: true,
+        data: { accepted: true },
+        meta: { idempotencyReplay: true },
+      }),
+    );
+
+    const { status, payload } = await post(validForm);
+
+    expect(status).toBe(202);
+    expect(payload.ok).toBe(true);
+    expect(payload.message).not.toMatch(/we have sent you a link/i);
+    expect(payload.message).toMatch(/already have an application/i);
+    expect(payload.message).toMatch(/24 hours/i);
+  });
+
+  it('still promises the email on a genuine first acceptance', async () => {
+    fetchMock.mockResolvedValue(
+      upstream(202, { ok: true, data: { accepted: true }, meta: {} }),
+    );
+
+    const { payload } = await post(validForm);
+
+    expect(payload.message).toMatch(/we have sent you a link/i);
   });
 });

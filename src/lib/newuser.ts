@@ -44,12 +44,31 @@ export type BackendResult<T> = {
   code: string | null;
   /** Field-level validation detail, when the app supplied it. */
   fields: Record<string, string[]> | null;
+  /**
+   * True when the app answered from its idempotency store instead of doing the
+   * work. The signup was NOT re-created and no new email was sent, so the caller
+   * must not tell the visitor to go and check their inbox.
+   */
+  replay: boolean;
 };
 
 type Envelope = {
   ok?: boolean;
   data?: unknown;
-  error?: { code?: string; details?: { fields?: Record<string, string[]> } } | null;
+  error?: {
+    code?: string;
+    message?: string;
+    /*
+     * The app puts per-field detail directly on `error.fields`. It was read from
+     * `error.details.fields` here once, which silently matched nothing: every
+     * upstream field error was dropped and the form said "check the highlighted
+     * fields" with nothing highlighted. `details.fields` is still accepted in
+     * case the envelope ever nests it.
+     */
+    fields?: Record<string, string[]>;
+    details?: { fields?: Record<string, string[]> };
+  } | null;
+  meta?: { idempotencyReplay?: boolean } | null;
 };
 
 async function readEnvelope(response: Response): Promise<Envelope> {
@@ -66,7 +85,8 @@ function toResult<T>(status: number, envelope: Envelope): BackendResult<T> {
     status,
     data: (envelope.data as T) ?? null,
     code: envelope.error?.code ?? null,
-    fields: envelope.error?.details?.fields ?? null,
+    fields: envelope.error?.fields ?? envelope.error?.details?.fields ?? null,
+    replay: envelope.meta?.idempotencyReplay === true,
   };
 }
 
@@ -76,7 +96,14 @@ function toResult<T>(status: number, envelope: Envelope): BackendResult<T> {
  * (503), because only the second one is worth retrying.
  */
 function unreachable<T>(): BackendResult<T> {
-  return { ok: false, status: 503, data: null, code: 'BACKEND_UNREACHABLE', fields: null };
+  return {
+    ok: false,
+    status: 503,
+    data: null,
+    code: 'BACKEND_UNREACHABLE',
+    fields: null,
+    replay: false,
+  };
 }
 
 export async function createNewUser(
