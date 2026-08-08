@@ -33,14 +33,22 @@ describe('normalizeSignup', () => {
         fullName: '  Ada   Lovelace ',
         email: '  ADA@Example.COM ',
         phone: ' 9876543210 ',
+        password: 'analytical-engine-1843',
         acceptedConsents: true,
       }),
     ).toEqual({
       fullName: 'Ada Lovelace',
       email: 'ada@example.com',
       phone: '+919876543210',
+      password: 'analytical-engine-1843',
       acceptedConsents: true,
     });
+  });
+
+  it('defaults a missing password to empty rather than undefined', () => {
+    // validateSignup then reports it as too short, which is the message a visitor
+    // who skipped the field should see.
+    expect(normalizeSignup({}).password).toBe('');
   });
 
   it('treats a missing or non-true consent as not accepted', () => {
@@ -54,6 +62,8 @@ describe('validateSignup', () => {
     fullName: 'Ada Lovelace',
     email: 'ada@example.com',
     phone: '9876543210',
+    password: 'analytical-engine-1843',
+    confirmPassword: 'analytical-engine-1843',
     acceptedConsents: true,
   };
 
@@ -101,12 +111,87 @@ describe('validateSignup', () => {
   });
 
   it('reports every bad field at once rather than one at a time', () => {
-    const result = validateSignup({ fullName: '', email: 'nope', phone: '1', acceptedConsents: false });
+    const result = validateSignup({
+      fullName: '',
+      email: 'nope',
+      phone: '1',
+      password: 'tiny',
+      acceptedConsents: false,
+    });
     expect(Object.keys(result.errors).sort()).toEqual([
       'acceptedConsents',
       'email',
       'fullName',
+      'password',
       'phone',
     ]);
+  });
+
+  it.each([
+    ['', 'empty'],
+    ['short', 'five characters'],
+    ['elevenchars', 'eleven characters, one under the minimum'],
+    ['x'.repeat(129), 'over 128 characters'],
+  ])('rejects the password %s (%s)', (password) => {
+    const result = validateSignup({ ...valid, password, confirmPassword: password });
+    expect(result.errors.password).toBeDefined();
+  });
+
+  it('accepts exactly 12 characters, the backend minimum', () => {
+    const password = 'x'.repeat(12);
+    const result = validateSignup({ ...valid, password, confirmPassword: password });
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects control characters in the password, matching the backend', () => {
+    const password = 'has\u0007a-bell-char';
+    expect(validateSignup({ ...valid, password, confirmPassword: password }).errors.password).toBeDefined();
+  });
+
+  it('requires the re-entry to match', () => {
+    const result = validateSignup({ ...valid, confirmPassword: 'analytical-engine-1844' });
+    expect(result.ok).toBe(false);
+    expect(result.errors.confirmPassword).toBeDefined();
+  });
+
+  it('accepts a body with no re-entry field at all', () => {
+    // Regression: this is exactly what the route handler re-validates, because the
+    // form posts the NORMALISED values and those exclude confirmPassword. Reading
+    // the absent field as an empty string rejected every real signup with "Both
+    // passwords must match".
+    const { confirmPassword, ...withoutReentry } = valid;
+    const result = validateSignup(withoutReentry);
+
+    expect(result.ok).toBe(true);
+    expect(result.errors.confirmPassword).toBeUndefined();
+  });
+
+  it('still rejects a supplied-but-empty re-entry', () => {
+    // Absent is "not applicable"; empty is someone who skipped the second box.
+    const result = validateSignup({ ...valid, confirmPassword: '' });
+    expect(result.errors.confirmPassword).toBeDefined();
+  });
+
+  it('reports only the length problem when the password is both short and mismatched', () => {
+    // One problem at a time: telling someone their password is too short AND
+    // does not match is noise, since fixing the first invalidates the second.
+    const result = validateSignup({ ...valid, password: 'tiny', confirmPassword: 'different' });
+    expect(result.errors.password).toBeDefined();
+    expect(result.errors.confirmPassword).toBeUndefined();
+  });
+
+  it('preserves the password exactly, including surrounding spaces', () => {
+    // Trimming here would store a different secret than the one chosen, and the
+    // person would then fail to sign in with the password they believe they set.
+    const password = '  spaced password  ';
+    const result = validateSignup({ ...valid, password, confirmPassword: password });
+    expect(result.ok).toBe(true);
+    expect(result.values.password).toBe(password);
+  });
+
+  it('does not carry the re-entry through to the normalised values', () => {
+    // The backend schema is strict, so an extra field would be rejected upstream.
+    const result = validateSignup(valid);
+    expect(result.values).not.toHaveProperty('confirmPassword');
   });
 });

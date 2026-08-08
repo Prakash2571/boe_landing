@@ -19,6 +19,14 @@ export type NewUserRequest = {
   email: string;
   /** E.164, e.g. +919876543210. */
   phone: string;
+  /**
+   * The password the applicant will sign in to the app with, in the clear over
+   * TLS exactly once. The app backend hashes it with Argon2id on receipt and
+   * stores only the hash; nothing on this site persists, logs, or caches it.
+   * Note there is no `confirmPassword`: re-entry is checked in the browser and
+   * the route handler, and would be rejected here as an unexpected field anyway.
+   */
+  password: string;
   acceptedConsents: true;
   /**
    * Optional. Supplying one makes a retry safe even if the body differs; when

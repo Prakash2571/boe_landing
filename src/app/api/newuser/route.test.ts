@@ -29,6 +29,8 @@ const validForm = {
   fullName: 'Ada Lovelace',
   email: 'ada@example.com',
   phone: '9876543210',
+  password: 'analytical-engine-1843',
+  confirmPassword: 'analytical-engine-1843',
   acceptedConsents: true,
 };
 
@@ -70,13 +72,62 @@ describe('POST /api/newuser', () => {
     expect(url).toBe(`${API_BASE}/newuser`);
     expect(init.method).toBe('POST');
     expect(init.headers['x-signup-key']).toBe(SECRET);
-    // The phone reaches the app as E.164 even though the form sent 10 digits.
+    // The phone reaches the app as E.164 even though the form sent 10 digits,
+    // and confirmPassword is dropped: it is a browser-side typo guard, and the
+    // upstream schema is strict, so forwarding it would be rejected outright.
     expect(JSON.parse(init.body)).toEqual({
       fullName: 'Ada Lovelace',
       email: 'ada@example.com',
       phone: '+919876543210',
+      password: 'analytical-engine-1843',
       acceptedConsents: true,
     });
+  });
+
+  it('accepts the exact body the form posts, which carries no confirmPassword', async () => {
+    // Regression: SignupForm sends validateSignup().values, and those deliberately
+    // exclude confirmPassword. The handler re-validates that body, so treating the
+    // absent re-entry as an empty string made every real browser signup fail with
+    // "Both passwords must match" while hand-written JSON that included the field
+    // still passed — which is how this got past a curl-based check.
+    fetchMock.mockResolvedValue(upstream(202, { ok: true, data: { accepted: true } }));
+
+    const { confirmPassword, ...asPostedByTheForm } = validForm;
+    const { status, payload } = await post(asPostedByTheForm);
+
+    expect(status).toBe(202);
+    expect(payload.ok).toBe(true);
+    expect(payload.fields).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a mismatched password re-entry locally, without calling the app', async () => {
+    const { status, payload } = await post({ ...validForm, confirmPassword: 'something-else-99' });
+
+    expect(status).toBe(400);
+    expect(payload.fields.confirmPassword).toBeDefined();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a too-short password locally, without calling the app', async () => {
+    const { status, payload } = await post({ ...validForm, password: 'short', confirmPassword: 'short' });
+
+    expect(status).toBe(400);
+    expect(payload.fields.password).toBeDefined();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('never echoes the password back to the browser', async () => {
+    fetchMock.mockResolvedValue(
+      upstream(400, {
+        ok: false,
+        error: { code: 'VALIDATION_FAILED', details: { fields: { email: ['is already in use'] } } },
+      }),
+    );
+
+    const { payload } = await post(validForm);
+
+    expect(JSON.stringify(payload)).not.toContain('analytical-engine-1843');
   });
 
   it('rejects an unaccepted consent locally, without calling the app', async () => {
@@ -138,14 +189,34 @@ describe('POST /api/newuser', () => {
     expect(payload.ok).toBe(false);
   });
 
-  it('reports the app being unconfigured (503) as a retryable failure', async () => {
+  it('reports a dependency outage as a retryable 503, not a permanent failure', async () => {
     fetchMock.mockResolvedValue(
       upstream(503, { ok: false, error: { code: 'DEPENDENCY_UNAVAILABLE' } }),
     );
 
     const { status, payload } = await post(validForm);
 
-    expect(status).toBe(502);
+    expect(status).toBe(503);
     expect(payload.ok).toBe(false);
+    expect(payload.message).toMatch(/try again/i);
+    // Not a field problem: the visitor is not sent back to change what they typed.
+    expect(payload.fields).toBeUndefined();
+  });
+
+  it('surfaces a breached password as a field error the visitor can act on', async () => {
+    fetchMock.mockResolvedValue(
+      upstream(400, {
+        ok: false,
+        error: {
+          code: 'VALIDATION_FAILED',
+          details: { fields: { password: ['this password appeared in a data breach; choose another'] } },
+        },
+      }),
+    );
+
+    const { status, payload } = await post(validForm);
+
+    expect(status).toBe(400);
+    expect(payload.fields.password).toMatch(/data breach/i);
   });
 });

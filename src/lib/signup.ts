@@ -5,6 +5,10 @@
 // server re-runs these rules because client-side validation is a convenience,
 // never a guarantee — a request can reach /api/newuser without the form.
 //
+// `confirmPassword` is validated but never part of the normalised output: it is a
+// typo guard for the person at the keyboard, so it is checked where the two boxes
+// exist and is not forwarded to the backend.
+//
 // Pure and dependency-free: no mutation, always returns fresh objects.
 
 /** Matches the backend: E.164, leading +, 8-15 digits total, no leading zero. */
@@ -15,10 +19,21 @@ const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/;
 /** Default country code applied to a bare national number. */
 const DEFAULT_DIAL_CODE = '+91';
 
+/**
+ * Matches the backend's `passwordInputSchema` (12-128 code points, no control
+ * characters). Kept in step deliberately: a rule the form enforces but the
+ * backend does not is friction for nothing, and a rule the backend enforces but
+ * the form does not is a 400 the visitor cannot see coming.
+ */
+const PASSWORD_MIN_LENGTH = 12;
+const PASSWORD_MAX_LENGTH = 128;
+
 export type SignupInput = {
   fullName?: string;
   email?: string;
   phone?: string;
+  password?: string;
+  confirmPassword?: string;
   acceptedConsents?: boolean;
 };
 
@@ -26,10 +41,13 @@ export type NormalizedSignup = {
   fullName: string;
   email: string;
   phone: string;
+  password: string;
   acceptedConsents: boolean;
 };
 
-export type SignupErrors = Partial<Record<keyof NormalizedSignup, string>>;
+export type SignupErrors = Partial<
+  Record<keyof NormalizedSignup | 'confirmPassword', string>
+>;
 
 function toText(value: unknown): string {
   return typeof value === 'string' ? value : '';
@@ -66,6 +84,13 @@ export function normalizeSignup(input: SignupInput = {}): NormalizedSignup {
     fullName: toText(input.fullName).trim().replace(/\s+/g, ' '),
     email: toText(input.email).trim().toLowerCase(),
     phone: normalizePhone(toText(input.phone)),
+    /*
+     * Never trimmed and never case-folded. Leading or trailing spaces are part of
+     * a password a visitor deliberately chose, and silently removing them here
+     * would store a different secret than the one they typed — they would then
+     * fail to sign in with the password they believe they set.
+     */
+    password: toText(input.password),
     acceptedConsents: input.acceptedConsents === true,
   };
 }
@@ -96,6 +121,40 @@ export function validateSignup(input: SignupInput = {}): {
     ? undefined
     : 'Enter a valid mobile number with country code, e.g. +91 98765 43210';
 
+  const passwordLength = [...values.password].length;
+  const passwordError =
+    passwordLength < PASSWORD_MIN_LENGTH || passwordLength > PASSWORD_MAX_LENGTH
+      ? `Choose a password of ${PASSWORD_MIN_LENGTH} to ${PASSWORD_MAX_LENGTH} characters`
+      : CONTROL_CHARS.test(values.password)
+        ? 'Your password contains characters we cannot accept'
+        : undefined;
+
+  /*
+   * The re-entry is only meaningful where two boxes exist, so it is enforced only
+   * when one was actually supplied.
+   *
+   * An ABSENT re-entry must not be read as a mismatch. The browser sends both
+   * fields, but it posts the NORMALISED values — which deliberately exclude
+   * confirmPassword — and the route handler re-validates that body. Treating the
+   * missing field as an empty string compared it against a real password and
+   * failed every correctly-filled signup with "Both passwords must match".
+   *
+   * Present-but-wrong is still rejected, so a caller that does send a re-entry
+   * gets the same check the form applies rather than a weaker one.
+   *
+   * Only checked once the password itself is valid, so a visitor is told one
+   * problem at a time rather than "too short" and "does not match" together.
+   * Compared against the raw second field, not a normalised copy — the point is
+   * to catch a typo in exactly what was typed.
+   */
+  const reentry = input.confirmPassword;
+  const confirmError =
+    passwordError || typeof reentry !== 'string'
+      ? undefined
+      : reentry === values.password
+        ? undefined
+        : 'Both passwords must match';
+
   const consentError = values.acceptedConsents
     ? undefined
     : 'Please accept the Terms and Privacy Policy to continue';
@@ -104,6 +163,8 @@ export function validateSignup(input: SignupInput = {}): {
     ...(fullNameError ? { fullName: fullNameError } : {}),
     ...(emailError ? { email: emailError } : {}),
     ...(phoneError ? { phone: phoneError } : {}),
+    ...(passwordError ? { password: passwordError } : {}),
+    ...(confirmError ? { confirmPassword: confirmError } : {}),
     ...(consentError ? { acceptedConsents: consentError } : {}),
   };
 

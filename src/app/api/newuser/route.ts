@@ -54,6 +54,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     fullName: values.fullName,
     email: values.email,
     phone: values.phone,
+    password: values.password,
     acceptedConsents: true,
   });
 
@@ -104,6 +105,24 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     case 'BACKEND_UNREACHABLE':
       console.error('[newuser] could not reach the app backend at BEO_API_BASE');
       return json({ ok: false, message: GENERIC_RETRY }, 503);
+
+    case 'DEPENDENCY_UNAVAILABLE':
+      /*
+       * Something the app needs to accept a signup is down — most often the
+       * breached-password check, which fails closed rather than admitting a
+       * password it could not screen, and occasionally a missing published
+       * consent document. Both are transient from the visitor's side and neither
+       * is a fault in what they typed, so the message says to retry rather than
+       * sending them back to the form to change something.
+       */
+      console.error('[newuser] the app backend reported a dependency outage while accepting a signup');
+      return json(
+        {
+          ok: false,
+          message: 'We could not complete your signup just now. Please try again in a few minutes.',
+        },
+        503,
+      );
 
     default:
       console.error(`[newuser] unexpected app response: ${result.status} ${result.code ?? ''}`);

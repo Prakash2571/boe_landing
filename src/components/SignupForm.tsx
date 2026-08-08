@@ -4,11 +4,12 @@ import { useState, type FormEvent } from 'react';
 
 import { validateSignup, type SignupErrors } from '../lib/signup';
 
-// What signup means now: this form does NOT create a session or a password. It
-// registers an application with the BeOnEdge app backend, which emails a
-// confirmation link and then queues the person for admin review. Credentials are
-// issued later, inside the client app, once an admin approves them. So there is
-// nothing to log into here and nothing to redirect to.
+// What signup means now: this form collects the password the person will sign in
+// to the BeOnEdge app with. It does NOT create a session here — there is nothing
+// on this site to log into. It registers an application with the app backend,
+// which emails a confirmation link and queues the person for admin review. Once
+// an admin approves them their account opens with this same password, so the
+// password is chosen here rather than issued later.
 
 type Status =
   | { kind: 'idle' }
@@ -20,6 +21,8 @@ const initialValues = {
   fullName: '',
   email: '',
   phone: '',
+  password: '',
+  confirmPassword: '',
   acceptedConsents: false,
 };
 
@@ -33,6 +36,7 @@ export default function SignupForm() {
   const [values, setValues] = useState(initialValues);
   const [errors, setErrors] = useState<SignupErrors>({});
   const [status, setStatus] = useState<Status>({ kind: 'idle' });
+  const [showPasswords, setShowPasswords] = useState(false);
 
   function update<K extends keyof typeof values>(key: K, value: typeof values[K]) {
     setValues((prev) => ({ ...prev, [key]: value }));
@@ -78,6 +82,7 @@ export default function SignupForm() {
 
       setValues(initialValues);
       setErrors({});
+      setShowPasswords(false);
       setStatus({
         kind: 'done',
         message: payload.message || 'Check your email to confirm your address.',
@@ -93,14 +98,16 @@ export default function SignupForm() {
   const submitting = status.kind === 'submitting';
 
   // On success the form is replaced entirely. Leaving the fields on screen
-  // invites a second submission of details that are already registered.
+  // invites a second submission of details that are already registered — and
+  // leaves a password sitting in a DOM input for no reason.
   if (status.kind === 'done') {
     return (
       <div className="form__done" role="status" aria-live="polite">
         <p className="form__status form__status--success">{status.message}</p>
         <p className="form__hint">
-          The link is valid for 24 hours. Once you confirm, our team reviews your application and
-          emails you when your account is ready.
+          The link is valid for 24 hours. Once you confirm, our team reviews your application
+          and emails you when your account is ready. You will then sign in to the BeOnEdge app
+          with the email address and password you just chose.
         </p>
       </div>
     );
@@ -162,6 +169,71 @@ export default function SignupForm() {
             Indian numbers work without the country code.
           </span>
         )}
+      </div>
+
+      {/*
+        autoComplete="new-password" on both, so a password manager offers to
+        generate and store one instead of filling an existing credential.
+      */}
+      <div className={`field ${errors.password ? 'field--error' : ''}`}>
+        <label htmlFor="signup-password">Create password</label>
+        <input
+          id="signup-password"
+          name="password"
+          type={showPasswords ? 'text' : 'password'}
+          autoComplete="new-password"
+          minLength={12}
+          maxLength={128}
+          value={values.password}
+          onChange={(event) => update('password', event.target.value)}
+          aria-invalid={Boolean(errors.password)}
+          aria-describedby={errors.password ? 'signup-password-error' : 'signup-password-hint'}
+        />
+        {errors.password ? (
+          <span className="field__error" id="signup-password-error">{errors.password}</span>
+        ) : (
+          <span className="field__hint" id="signup-password-hint">
+            At least 12 characters. You will use this to sign in to the app once your
+            account is approved.
+          </span>
+        )}
+      </div>
+
+      <div className={`field ${errors.confirmPassword ? 'field--error' : ''}`}>
+        <label htmlFor="signup-confirm-password">Re-enter password</label>
+        <input
+          id="signup-confirm-password"
+          name="confirmPassword"
+          type={showPasswords ? 'text' : 'password'}
+          autoComplete="new-password"
+          maxLength={128}
+          value={values.confirmPassword}
+          onChange={(event) => update('confirmPassword', event.target.value)}
+          aria-invalid={Boolean(errors.confirmPassword)}
+          aria-describedby={errors.confirmPassword ? 'signup-confirm-password-error' : undefined}
+        />
+        {errors.confirmPassword ? (
+          <span className="field__error" id="signup-confirm-password-error">
+            {errors.confirmPassword}
+          </span>
+        ) : null}
+      </div>
+
+      {/*
+        A reveal toggle rather than a strength meter. It lets someone check what
+        they typed, which is the actual cause of a mismatched re-entry; a meter
+        would only restate the length rule already shown above.
+      */}
+      <div className="field field--consent">
+        <label className="consent" htmlFor="signup-show-passwords">
+          <input
+            id="signup-show-passwords"
+            type="checkbox"
+            checked={showPasswords}
+            onChange={(event) => setShowPasswords(event.target.checked)}
+          />
+          <span>Show passwords</span>
+        </label>
       </div>
 
       <div className={`field field--consent ${errors.acceptedConsents ? 'field--error' : ''}`}>

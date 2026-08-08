@@ -6,6 +6,10 @@ import SignupForm from '../../components/SignupForm';
 // this site — it registers an application with the app backend, which confirms
 // the email and then queues the person for admin review. There is no "already
 // signed in" state for this page to bounce away from.
+//
+// The form does collect a password, but only to send it upstream: it becomes the
+// credential for the gated app once an admin approves the application. Nothing on
+// this site can be signed into.
 
 export const metadata = {
   title: 'Create your account — BeOnEdge',
@@ -21,8 +25,9 @@ export default function SignupPage() {
             <span className="eyebrow">Create account</span>
             <h1 className="section__title" id="signup-title">Start with BeOnEdge</h1>
             <p className="section__lead">
-              Tell us how to reach you. We will email you a link to confirm your address, then our
-              team reviews your application and sends your access details.
+              Tell us how to reach you and choose a password. We will email you a link to confirm
+              your address, then our team reviews your application and tells you when your account
+              is open — you sign in to the app with the password you set here.
             </p>
             <SignupForm />
             <p className="auth-switch">
