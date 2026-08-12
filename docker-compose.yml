@@ -5,11 +5,11 @@
 #   docker compose up -d --build
 #   → http://localhost
 #
-# Two containers: the Next.js site, and nginx in front of it. TLS is opt-in (see
-# nginx/vhost-tls.conf and the certbot service below) because a fresh clone has
-# no certificate, and nginx will not start if it is told to load one that is
-# missing. HTTP-only is also the correct shape when an AWS ALB or CloudFront is
-# terminating TLS ahead of this box.
+# Two containers: the Next.js site, and nginx in front of it. Plain HTTP only —
+# TLS always terminates in front of this origin (the Cloudflare Tunnel in
+# production, nothing at all locally), so there is no certificate here to manage
+# and no certbot. On the VPS the bundled nginx is switched off entirely by
+# docker-compose.override.yml, because the host's nginx already owns :80.
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: boe-landing
@@ -77,67 +77,17 @@ services:
         condition: service_healthy
     ports:
       - "80:80"
-      - "443:443"
     volumes:
       # http-context settings (rate-limit zones, gzip, real_ip) — always mounted.
       - ./nginx/shared.conf:/etc/nginx/conf.d/00-shared.conf:ro
-      # The vhost. Defaults to plain HTTP; set NGINX_VHOST=./nginx/vhost-tls.conf
-      # in .env once a certificate exists. Switching is a file swap, not an edit,
-      # so the HTTP config stays intact and reviewable.
-      - ${NGINX_VHOST:-./nginx/vhost-http.conf}:/etc/nginx/conf.d/10-landing.conf:ro
+      # The vhost. There is only one: TLS is always terminated in front of this
+      # origin, so there is no certificate here to configure and no variant to
+      # choose between.
+      - ./nginx/vhost.conf:/etc/nginx/conf.d/10-landing.conf:ro
       - ./nginx/snippets:/etc/nginx/snippets:ro
-      # Certificates and the ACME webroot.
-      #
-      # Default: Docker-managed named volumes, written by the certbot service
-      # below — nothing on the host, nothing in the working tree.
-      #
-      # Override to host paths when the box already manages its own certificates
-      # and you do not want to reissue (see nginx/vhost-host-certs.conf):
-      #   LETSENCRYPT_SRC=/etc/letsencrypt
-      #   ACME_WEBROOT_SRC=/var/www/certbot
-      # Compose treats a value containing `/` as a bind mount and a bare name as
-      # a named volume, so the same line covers both without a second file.
-      - ${LETSENCRYPT_SRC:-letsencrypt}:/etc/letsencrypt:ro
-      - ${ACME_WEBROOT_SRC:-acme_challenge}:/var/www/certbot:ro
     networks:
       - edge
-
-  # ── TLS, on demand ────────────────────────────────────────────────────────
-  # Under a profile so `docker compose up` never tries to reach Let's Encrypt.
-  # Issuance is a one-off command; renewal is the loop below.
-  #
-  #   docker compose run --rm certbot certonly --webroot -w /var/www/certbot \
-  #     -d beonedge.in -d www.beonedge.in \
-  #     --email ops@beonedge.in --agree-tos --no-eff-email
-  #
-  # Then set NGINX_VHOST=./nginx/vhost-tls.conf and recreate nginx.
-  certbot:
-    image: certbot/certbot:v2.11.0
-    container_name: boe-landing-certbot
-    profiles:
-      - tls
-    volumes:
-      - ${LETSENCRYPT_SRC:-letsencrypt}:/etc/letsencrypt
-      - ${ACME_WEBROOT_SRC:-acme_challenge}:/var/www/certbot
-    # Renewal loop. Twice a day is what Let's Encrypt asks for: certbot exits
-    # immediately unless the certificate is inside its renewal window, and the
-    # random sleep keeps every deployment in the world from hitting them at the
-    # same minute.
-    entrypoint: >
-      sh -c 'trap exit TERM;
-             while :; do
-               certbot renew --webroot -w /var/www/certbot --quiet;
-               sleep $$((43200 + RANDOM % 3600)) & wait $${!};
-             done'
-    restart: unless-stopped
 
 networks:
   edge:
     driver: bridge
-
-volumes:
-  # Certificates and the ACME webroot are named volumes, not bind mounts: private
-  # keys then never sit in the working tree where a `git add -A` or a stray
-  # `zip -r` could pick them up.
-  letsencrypt:
-  acme_challenge:

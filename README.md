@@ -48,16 +48,16 @@ an empty string and looking healthy until the first signup fails.
 
 ```
 nginx/
+  vhost.conf               the one server block: signup limit, assets, proxy
   shared.conf              http-context settings: rate-limit zones, gzip, real_ip
-  vhost-http.conf          DEFAULT — plain HTTP, no certificate needed
-  vhost-tls.conf           nginx obtains its own cert via the certbot service
-  vhost-host-certs.conf    nginx uses certificates the HOST already manages
   snippets/
-    proxy-landing.conf     the proxy_pass block every vhost shares
+    proxy-landing.conf     the proxy_pass block every location shares
     security-headers.conf  CSP, frame/sniff/referrer/permissions
-    tls-params.conf        protocols, ciphers, session cache, stapling
-    acme-challenge.conf    Let's Encrypt HTTP-01 webroot
 ```
+
+There is one vhost and no TLS configuration. TLS always terminates in front of
+this origin, so the origin holds no certificate and there is nothing for certbot
+to obtain or renew here. See **TLS** below.
 
 ### Cloudflare
 
@@ -67,8 +67,10 @@ CF-Connecting-IP`. Without it every request arrives from a Cloudflare edge
 address and **all visitors share one rate-limit bucket**. It is harmless
 off-Cloudflare: a direct or localhost connection never matches those ranges.
 
-Cloudflare talks HTTPS to this origin, so the origin needs a working certificate
-— HTTP-only is not an option here unless the Cloudflare SSL mode is changed too.
+Cloudflare reaches this origin over a **Tunnel**: `cloudflared` runs on the box
+and opens an outbound connection to Cloudflare, so nothing of this site listens on
+the public internet and the origin needs no certificate of its own. Plain HTTP
+between the tunnel and nginx is correct, not a compromise.
 
 ### Rate limits
 
@@ -77,7 +79,7 @@ backend, where the caller is one server and the budget is shared.
 
 | Path | Limit | Why |
 |---|---|---|
-| `/api/newuser` | 10r/m, burst 3 | Each accepted POST creates an application row on the app backend |
+| `/api/newuser` | 30r/m, burst 10 | Each accepted POST creates an application row on the app backend. Burst 10 so several people behind one NAT can sign up at once |
 | `/_next/static/` | none | A cold page load legitimately fetches dozens of fingerprinted assets |
 | everything else | 30r/s, burst 60 | Normal browsing |
 
@@ -87,140 +89,38 @@ bucket, because `$binary_remote_addr` will be the proxy's address.
 
 ### TLS
 
-Plain HTTP is the default on purpose: nginx refuses to start if told to load a
-certificate that does not exist, which is always the case on a fresh clone. HTTP
-is also the correct shape when an ALB or CloudFront terminates TLS in front.
+There is none here, and that is deliberate.
 
-To terminate TLS here instead:
+TLS terminates at the Cloudflare edge. Traffic reaches the box through an
+outbound tunnel, so there is no public listener to present a certificate on, and
+an ACME HTTP-01 challenge has no address to answer at. The repo therefore ships
+one plain-HTTP vhost and no certbot: configuration for a certificate that cannot
+exist reads as an option, and someone eventually tries to take it.
 
-```bash
-docker compose up -d                                  # 1. site up on HTTP
+If this site is ever moved to an origin that is directly addressable — an EC2 box
+behind an ALB, say — TLS belongs on the load balancer, and this vhost is already
+the right shape for that.
 
-docker compose run --rm certbot certonly \            # 2. get a certificate
-  --webroot -w /var/www/certbot \
-  -d beonedge.in -d www.beonedge.in \
-  --email ops@beonedge.in --agree-tos --no-eff-email
+## How it is actually deployed
 
-echo 'NGINX_VHOST=./nginx/vhost-tls.conf' >> .env     # 3. switch the vhost
-docker compose up -d --force-recreate nginx
+Worth knowing before changing anything in `nginx/`, because in production **this
+repo's nginx does not run**.
 
-docker compose --profile tls up -d certbot            # 4. renewal loop
-```
+On the VPS the site runs as one container publishing `127.0.0.1:47410`, and the
+**host** nginx serves it. A `docker-compose.override.yml` on that box (untracked,
+VPS-only) puts the bundled `nginx` service behind an unused profile, because the
+host nginx already owns :80 and a second one cannot bind it — a tunnelled origin
+does name-based routing for every hostname on the box in one place.
 
-Step 3 is a file swap, not an edit — the HTTP config stays intact. The domain
-appears in `vhost-tls.conf` in three places (`server_name` plus the two
-certificate paths); if the site moves, change all three, since a mismatch is what
-produces a browser trust warning.
+That means the config actually serving `beonedge.in` lives on the VPS, at
+`/srv/dev_stack/BOE_LANDING/nginx/boe-landing.conf` (installed to
+`/etc/nginx/sites-available/boe-landing`, with its headers snippet in
+`/etc/nginx/snippets/`), and **not in this repository**. It reproduces what
+`nginx/` does here — CF-Connecting-IP real_ip, the signup limit with the JSON 429,
+security headers — against the host's shared zones.
 
-Certificates live in a named Docker volume, not a bind mount, so private keys
-never sit in the working tree where `git add -A` or a stray `zip -r` could pick
-them up.
-
-## Migrating a pm2 + host-nginx box to Docker
-
-If the box currently runs the site under pm2 behind a host nginx, the switch has
-three real hazards. None is hard, but skipping any one of them breaks something
-that will not be obvious for weeks.
-
-**1. Certificate renewal.** A certbot certificate obtained with `--nginx` has
-`authenticator = nginx` in its renewal config, meaning renewal drives the *host*
-nginx to answer the challenge. Move nginx into a container and there is nothing
-for it to drive: renewal fails silently until the certificate expires.
-
-Two traps here, both learned the hard way:
-
-- **Do this AFTER the container is up**, not before. The host nginx does not serve
-  `/.well-known/acme-challenge/` from the webroot, so a webroot challenge fails
-  while the old stack is still in place. The container's vhost does serve it, on
-  both :80 and :443.
-- **`certonly --keep-until-expiring` will not rewrite the renewal config.** If the
-  certificate is not yet due it exits with "no action taken" and leaves
-  `authenticator = nginx` in place, so it looks like it worked and nothing
-  changed. Edit the renewal file directly instead.
-
-```bash
-sudo mkdir -p /var/www/certbot
-
-# A real executable, not an inline command: certbot validates that a hook's first
-# word exists in PATH, so `--deploy-hook 'cd /x && docker compose ...'` is
-# rejected with "Unable to find deploy-hook command cd in the PATH".
-sudo tee /usr/local/bin/boe-landing-reload-nginx >/dev/null <<'EOF'
-#!/bin/sh
-set -e
-cd /home/ubuntu/boe_landing
-docker compose exec -T nginx nginx -s reload
-EOF
-sudo chmod 755 /usr/local/bin/boe-landing-reload-nginx
-
-# Point the existing certificate at webroot instead of nginx.
-sudo sed -i 's/^authenticator = nginx$/authenticator = webroot/; /^installer = nginx$/d' \
-  /etc/letsencrypt/renewal/beonedge.in.conf
-sudo tee -a /etc/letsencrypt/renewal/beonedge.in.conf >/dev/null <<'EOF'
-[[webroot_map]]
-beonedge.in = /var/www/certbot
-www.beonedge.in = /var/www/certbot
-EOF
-# also add, under [renewalparams]:
-#   webroot_path = /var/www/certbot,
-#   renew_hook = /usr/local/bin/boe-landing-reload-nginx
-
-sudo certbot renew --dry-run     # must print "all simulated renewals succeeded"
-```
-
-The dry-run uses the staging server and performs a real challenge, so a pass is
-genuine proof rather than a config read-through.
-
-**2. Memory.** `next build` is the peak memory moment. On a 2 GB instance with no
-swap it can be OOM-killed mid-build, which leaves a half-written `.next` and a
-confusing failure. Add swap before building:
-
-```bash
-sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile
-sudo mkswap /swapfile && sudo swapon /swapfile
-echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
-```
-
-**3. Port ownership.** Host nginx holds 80/443; the container cannot bind them
-until it is stopped. Stop pm2 too, or two copies of the site compete.
-
-Then the migration itself:
-
-```bash
-cd /home/ubuntu/boe_landing
-git checkout package-lock.json          # drop local drift so the pull is clean
-git pull
-
-cat >> .env <<'EOF'
-NGINX_VHOST=./nginx/vhost-host-certs.conf
-LETSENCRYPT_SRC=/etc/letsencrypt
-ACME_WEBROOT_SRC=/var/www/certbot
-EOF
-chmod 600 .env                          # it holds NEWUSER_SHARED_SECRET
-
-pm2 delete all && pm2 save              # release :3110
-sudo systemctl disable --now nginx      # release :80 and :443
-
-docker compose up -d --build
-```
-
-Verify before walking away — a `200` on the homepage does not prove signup works,
-because the homepage never touches the app backend:
-
-```bash
-curl -sI https://beonedge.in/ | head -1
-curl -s -o /dev/null -w '%{http_code}\n' -X POST https://beonedge.in/api/newuser \
-  -H 'content-type: application/json' -d '{}'      # expect 400, NOT 502
-```
-
-A `502` there means nginx is not routing `/api/` to the app; a `503` means the
-app cannot reach `BEO_API_BASE`. Both have been live on this box before, so check
-them explicitly.
-
-### Rolling back
-
-pm2 still has the app registered until `pm2 delete`, so the fastest rollback is
-the reverse order: `docker compose down`, `sudo systemctl enable --now nginx`,
-`pm2 resurrect`.
+So `nginx/` in this repo is for local work and for any future directly-addressed
+deployment. Editing it does not change production; editing the host vhost does.
 
 ## The one integration with the app stack
 
@@ -282,7 +182,6 @@ Two values, both server-side only, neither prefixed `NEXT_PUBLIC_`. See
 |---|---|
 | `BEO_API_BASE` | App API base **including** `/api`, e.g. `https://dev-app.beonedge.in/api`. The app host's nginx strips `/api` before proxying. |
 | `NEWUSER_SHARED_SECRET` | Must be byte-identical to `NEWUSER_SHARED_SECRET` in the app stack's `.env`, or every signup is refused with 401. `openssl rand -hex 32`. |
-| `NGINX_VHOST` | Optional. Which nginx vhost `docker compose` mounts. Defaults to `./nginx/vhost-http.conf`. |
 
 Both required values are read at **request time**, not build time — so the Docker
 image carries neither, and they must be supplied to the running container. `.env`
