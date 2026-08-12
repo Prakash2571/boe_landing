@@ -189,6 +189,48 @@ describe('POST /api/newuser', () => {
     expect(payload.ok).toBe(false);
   });
 
+  it('turns a backend timeout into a retryable 504, not a silent hang', async () => {
+    // What AbortSignal.timeout actually rejects with: an error whose name is
+    // 'TimeoutError'. Without the upstream signal this fetch would hang until
+    // nginx's 30s proxy_read_timeout cut in with a bare HTML page the form
+    // cannot parse — the half-minute "Submitting..." freeze this prevents.
+    fetchMock.mockRejectedValue(Object.assign(new Error('timed out'), { name: 'TimeoutError' }));
+
+    const { status, payload } = await post(validForm);
+
+    expect(status).toBe(504);
+    expect(payload.ok).toBe(false);
+    expect(payload.message).toMatch(/try again/i);
+    // Not a field problem: the visitor retries, they do not edit what they typed.
+    expect(payload.fields).toBeUndefined();
+  });
+
+  it('answers 5 parallel signups independently, with no shared state', async () => {
+    // Parallel signups from one office NAT are the production scenario: the
+    // handler must process them concurrently, not serialise them. Each upstream
+    // call resolves after a small random delay, so any accidental shared-state
+    // serialisation would show up as missing or mixed-up responses here.
+    fetchMock.mockImplementation(
+      () =>
+        new Promise<Response>((resolve) =>
+          setTimeout(
+            () => resolve(upstream(202, { ok: true, data: { accepted: true } })),
+            Math.random() * 50,
+          ),
+        ),
+    );
+
+    const results = await Promise.all(
+      Array.from({ length: 5 }, () => post(validForm)),
+    );
+
+    for (const { status, payload } of results) {
+      expect(status).toBe(202);
+      expect(payload.ok).toBe(true);
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+  });
+
   it('reports a dependency outage as a retryable 503, not a permanent failure', async () => {
     fetchMock.mockResolvedValue(
       upstream(503, { ok: false, error: { code: 'DEPENDENCY_UNAVAILABLE' } }),
