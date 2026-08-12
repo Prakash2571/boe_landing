@@ -15,9 +15,29 @@ function required(name: string): string {
   return value.trim();
 }
 
-function optional(name: string, fallback: string): string {
-  const value = process.env[name];
-  return value && value.trim() ? value.trim() : fallback;
+const PRODUCTION_API_HOSTS = new Set(['dev-app.beonedge.in', 'app.beonedge.in']);
+
+function appApiBase(): string {
+  const raw = required('BEO_API_BASE');
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error('BEO_API_BASE must be a valid absolute URL.');
+  }
+  const path = url.pathname.replace(/\/$/u, '');
+  if (process.env.NODE_ENV === 'production'
+    && (url.protocol !== 'https:'
+      || !PRODUCTION_API_HOSTS.has(url.hostname)
+      || url.port
+      || url.username
+      || url.password
+      || path !== '/api'
+      || url.search
+      || url.hash)) {
+    throw new Error('BEO_API_BASE must be a canonical BeOnEdge HTTPS /api origin in production.');
+  }
+  return `${url.origin}${path}`;
 }
 
 export const serverEnv = {
@@ -32,7 +52,7 @@ export const serverEnv = {
    * docker network to fall back to.
    */
   appApiBase(): string {
-    return required('BEO_API_BASE').replace(/\/$/, '');
+    return appApiBase();
   },
 
   /**

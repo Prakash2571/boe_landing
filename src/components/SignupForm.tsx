@@ -7,8 +7,8 @@ import { validateSignup, type SignupErrors } from '../lib/signup';
 // What signup means now: this form collects the password the person will sign in
 // to the BeOnEdge app with. It does NOT create a session here — there is nothing
 // on this site to log into. It registers an application with the app backend,
-// which emails a confirmation link and queues the person for admin review. Once
-// an admin approves them their account opens with this same password, so the
+// and queues the person directly for admin review. Once an admin approves them,
+// their account opens with this same password, so the
 // password is chosen here rather than issued later.
 
 type Status =
@@ -85,7 +85,7 @@ export default function SignupForm() {
       setShowPasswords(false);
       setStatus({
         kind: 'done',
-        message: payload.message || 'Check your email to confirm your address.',
+        message: payload.message || 'Your application has been submitted for review.',
       });
     } catch {
       setStatus({
@@ -105,9 +105,8 @@ export default function SignupForm() {
       <div className="form__done" role="status" aria-live="polite">
         <p className="form__status form__status--success">{status.message}</p>
         <p className="form__hint">
-          The link is valid for 24 hours. Once you confirm, our team reviews your application
-          and emails you when your account is ready. You will then sign in to the BeOnEdge app
-          with the email address and password you just chose.
+          Our team will email you with the decision. If approved, the email includes the official
+          BeOnEdge app download link. Sign in with the email address and password you just chose.
         </p>
       </div>
     );

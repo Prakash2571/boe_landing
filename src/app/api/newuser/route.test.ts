@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const API_BASE = 'https://app.test/api';
 const SECRET = 'test-secret-0123456789012345678901234567';
+const ACCEPTED_MESSAGE = 'We have received your details. Our team will review them and email you with the decision.';
 
 let fetchMock: ReturnType<typeof vi.fn>;
 
@@ -60,7 +61,7 @@ async function post(body: unknown) {
 
 describe('POST /api/newuser', () => {
   it('forwards to {BEO_API_BASE}/newuser with the shared secret and a normalised body', async () => {
-    fetchMock.mockResolvedValue(upstream(202, { ok: true, data: { accepted: true } }));
+    fetchMock.mockResolvedValue(upstream(202, { ok: true, data: { accepted: true, outcome: 'created' } }));
 
     const { status, payload } = await post(validForm);
 
@@ -71,6 +72,8 @@ describe('POST /api/newuser', () => {
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe(`${API_BASE}/newuser`);
     expect(init.method).toBe('POST');
+    expect(init.redirect).toBe('error');
+    expect(init.signal).toBeInstanceOf(AbortSignal);
     expect(init.headers['x-signup-key']).toBe(SECRET);
     // The phone reaches the app as E.164 even though the form sent 10 digits,
     // and confirmPassword is dropped: it is a browser-side typo guard, and the
@@ -90,7 +93,7 @@ describe('POST /api/newuser', () => {
     // absent re-entry as an empty string made every real browser signup fail with
     // "Both passwords must match" while hand-written JSON that included the field
     // still passed — which is how this got past a curl-based check.
-    fetchMock.mockResolvedValue(upstream(202, { ok: true, data: { accepted: true } }));
+    fetchMock.mockResolvedValue(upstream(202, { ok: true, data: { accepted: true, outcome: 'created' } }));
 
     const { confirmPassword, ...asPostedByTheForm } = validForm;
     const { status, payload } = await post(asPostedByTheForm);
@@ -273,14 +276,14 @@ describe('POST /api/newuser', () => {
     expect(payload.message).not.toMatch(/highlighted/i);
   });
 
-  it('does not claim an email was sent when the app replayed a stored answer', async () => {
+  it('uses the same non-enumerating response when the app replays a stored answer', async () => {
     // An idempotency replay creates nothing and sends nothing. Telling the visitor
     // to check their inbox leaves them waiting for mail that will never arrive,
     // with no application in the review queue either.
     fetchMock.mockResolvedValue(
       upstream(202, {
         ok: true,
-        data: { accepted: true },
+        data: { accepted: true, outcome: 'created' },
         meta: { idempotencyReplay: true },
       }),
     );
@@ -289,18 +292,47 @@ describe('POST /api/newuser', () => {
 
     expect(status).toBe(202);
     expect(payload.ok).toBe(true);
-    expect(payload.message).not.toMatch(/we have sent you a link/i);
-    expect(payload.message).toMatch(/already have an application/i);
-    expect(payload.message).toMatch(/24 hours/i);
+    expect(payload.message).toBe(ACCEPTED_MESSAGE);
   });
 
-  it('still promises the email on a genuine first acceptance', async () => {
+  it('reports admin review without promising a signup email on first acceptance', async () => {
     fetchMock.mockResolvedValue(
-      upstream(202, { ok: true, data: { accepted: true }, meta: {} }),
+      upstream(202, { ok: true, data: { accepted: true, outcome: 'created' }, meta: {} }),
     );
 
     const { payload } = await post(validForm);
 
-    expect(payload.message).toMatch(/we have sent you a link/i);
+    expect(payload.message).toBe(ACCEPTED_MESSAGE);
   });
+
+  it.each(['duplicate_pending', 'duplicate_account'])(
+    'reports %s without claiming that a new application was submitted',
+    async (outcome) => {
+      fetchMock.mockResolvedValue(
+        upstream(200, { ok: true, data: { accepted: true, outcome }, meta: {} }),
+      );
+
+      const { status, payload } = await post(validForm);
+
+      expect(status).toBe(202);
+      expect(payload.ok).toBe(true);
+      expect(payload.message).toBe(ACCEPTED_MESSAGE);
+    },
+  );
+
+  it.each([undefined, 'future_outcome'])(
+    'fails closed when the app returns an unknown successful outcome (%s)',
+    async (outcome) => {
+      fetchMock.mockResolvedValue(
+        upstream(200, { ok: true, data: { accepted: true, outcome }, meta: {} }),
+      );
+
+      const { status, payload } = await post(validForm);
+
+      expect(status).toBe(502);
+      expect(payload.ok).toBe(false);
+      expect(payload.message).toMatch(/try again|contact support/i);
+      expect(console.error).toHaveBeenCalled();
+    },
+  );
 });

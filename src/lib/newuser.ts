@@ -1,10 +1,9 @@
 // SERVER-ONLY. The single place this site talks to the BeOnEdge app backend.
 //
-// Two calls, both on the unversioned external prefix the app stack keeps stable
-// for us (`/v1` is its internal contract and evolves without warning):
+// One call on the unversioned external prefix the app stack keeps stable for us
+// (`/v1` is its internal contract and evolves without warning):
 //
-//   POST /newuser               create a signup            (needs x-signup-key)
-//   POST /newuser/verify-email  redeem an emailed token     (no secret needed)
+//   POST /newuser  create a signup (needs x-signup-key)
 //
 // Why the secret never leaves the server: it is the app backend's only proof
 // that a signup came from this site. Importing this module from a client
@@ -12,6 +11,8 @@
 // a route handler and the browser only ever sees our own same-origin /api/*.
 
 import { serverEnv } from './env';
+
+const BACKEND_TIMEOUT_MS = 20_000;
 
 /** Shape POST /newuser accepts. It is `.strict()` upstream — no extra fields. */
 export type NewUserRequest = {
@@ -34,6 +35,14 @@ export type NewUserRequest = {
    * a double-submitted form.
    */
   idempotencyKey?: string;
+};
+
+export type NewUserOutcome = 'created' | 'duplicate_pending' | 'duplicate_account';
+
+export type NewUserResponse = {
+  accepted: boolean;
+  outcome: NewUserOutcome;
+  verificationEmailQueued: false;
 };
 
 export type BackendResult<T> = {
@@ -108,7 +117,7 @@ function unreachable<T>(): BackendResult<T> {
 
 export async function createNewUser(
   request: NewUserRequest,
-): Promise<BackendResult<{ accepted: boolean }>> {
+): Promise<BackendResult<NewUserResponse>> {
   let response: Response;
   try {
     response = await fetch(`${serverEnv.appApiBase()}/newuser`, {
@@ -119,26 +128,8 @@ export async function createNewUser(
       },
       body: JSON.stringify(request),
       cache: 'no-store',
-    });
-  } catch {
-    return unreachable();
-  }
-
-  return toResult(response.status, await readEnvelope(response));
-}
-
-export async function verifyNewUserEmail(
-  token: string,
-): Promise<BackendResult<{ verified: boolean }>> {
-  let response: Response;
-  try {
-    // No x-signup-key: the token IS the credential here. It is single-use,
-    // expiring, and was issued by the app backend to one mailbox.
-    response = await fetch(`${serverEnv.appApiBase()}/newuser/verify-email`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ token }),
-      cache: 'no-store',
+      redirect: 'error',
+      signal: AbortSignal.timeout(BACKEND_TIMEOUT_MS),
     });
   } catch {
     return unreachable();

@@ -24,6 +24,8 @@ type ApiResponse = {
 };
 
 const GENERIC_RETRY = 'We could not complete your signup. Please try again in a moment.';
+const NEWUSER_OUTCOMES = new Set(['created', 'duplicate_pending', 'duplicate_account']);
+const ACCEPTED_MESSAGE = 'We have received your details. Our team will review them and email you with the decision.';
 
 /**
  * Fields the form actually renders. Upstream detail is keyed by its own schema,
@@ -84,35 +86,15 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   });
 
   if (result.ok) {
-    /*
-     * A replay means the app recognised this exact identity from a recent
-     * submission and returned its stored answer without doing anything: no
-     * application was created or refreshed, and no email was sent. Saying "we
-     * have sent you a link" here is how someone ends up waiting for a mail that
-     * does not exist and never appears in the review queue. The key is derived
-     * from name + email + phone and lives for 24 hours, so the way forward is
-     * either the earlier email or a change to one of those details.
-     */
-    if (result.replay) {
-      return json(
-        {
-          ok: true,
-          message:
-            'We already have an application with these details from the last 24 hours. ' +
-            'Please use the confirmation link in the email we sent you then. If you did not ' +
-            'get it, contact support rather than submitting again.',
-        },
-        202,
-      );
+    const outcome = result.data?.outcome;
+    if (!outcome || !NEWUSER_OUTCOMES.has(outcome)) {
+      console.error('POST /api/newuser received an unknown successful outcome from the app');
+      return json({ ok: false, message: GENERIC_RETRY }, 502);
     }
 
-    return json(
-      {
-        ok: true,
-        message: 'Check your email — we have sent you a link to confirm your address.',
-      },
-      202,
-    );
+    // Created, duplicate, and replay share one response so the public route
+    // cannot be used to enumerate an existing account/application.
+    return json({ ok: true, message: ACCEPTED_MESSAGE }, 202);
   }
 
   // A rejected signup must never look successful, but it also must not leak the
