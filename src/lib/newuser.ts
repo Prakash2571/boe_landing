@@ -12,7 +12,16 @@
 
 import { serverEnv } from './env';
 
-const BACKEND_TIMEOUT_MS = 20_000;
+/**
+ * How long any call to the app backend may take before we give up and answer
+ * the browser ourselves. 20s sits deliberately under nginx's 30s
+ * proxy_read_timeout in front of this route: if we let the fetch hang, nginx is
+ * the one that answers first — with a bare HTML 504 the form cannot parse —
+ * while a self-imposed abort lets the route handler return its own JSON with a
+ * message the visitor can act on. It also bounds how long an overloaded backend
+ * (the parallel-signups pile-up) can hold a worker.
+ */
+export const UPSTREAM_TIMEOUT_MS = 20_000;
 
 /** Shape POST /newuser accepts. It is `.strict()` upstream — no extra fields. */
 export type NewUserRequest = {
@@ -115,6 +124,34 @@ function unreachable<T>(): BackendResult<T> {
   };
 }
 
+/**
+ * A timeout is also not a rejection, but it is not "unreachable" either: the
+ * app may still be processing the signup when we stop listening. It maps to
+ * 504 so the route handler can word it as "taking too long, try again" instead
+ * of the connection-failure message.
+ */
+function timedOut<T>(): BackendResult<T> {
+  return {
+    ok: false,
+    status: 504,
+    data: null,
+    code: 'BACKEND_TIMEOUT',
+    fields: null,
+    replay: false,
+  };
+}
+
+/**
+ * AbortSignal.timeout rejects the fetch with an error whose `name` is
+ * 'TimeoutError' (a DOMException on Node 18.17+). Anything else in the catch
+ * is a genuine network failure — DNS, refused connection, reset — which maps
+ * to BACKEND_UNREACHABLE. The name check is the portable way to tell the two
+ * apart; the message text varies between Node versions.
+ */
+function isTimeout(error: unknown): boolean {
+  return error instanceof Error && error.name === 'TimeoutError';
+}
+
 export async function createNewUser(
   request: NewUserRequest,
 ): Promise<BackendResult<NewUserResponse>> {
@@ -129,10 +166,10 @@ export async function createNewUser(
       body: JSON.stringify(request),
       cache: 'no-store',
       redirect: 'error',
-      signal: AbortSignal.timeout(BACKEND_TIMEOUT_MS),
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
     });
-  } catch {
-    return unreachable();
+  } catch (error) {
+    return isTimeout(error) ? timedOut() : unreachable();
   }
 
   return toResult(response.status, await readEnvelope(response));

@@ -1,17 +1,17 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { serverEnv } from './env';
 
-const originalNodeEnv = process.env.NODE_ENV;
-
+// NODE_ENV is typed readonly by Next's own ambient types, so assignments go
+// through vi.stubEnv — which also restores the original value on cleanup.
 afterEach(() => {
   process.env.BEO_API_BASE = undefined;
-  process.env.NODE_ENV = originalNodeEnv;
+  vi.unstubAllEnvs();
 });
 
 describe('serverEnv.appApiBase', () => {
   it('accepts the canonical development API in production', () => {
-    process.env.NODE_ENV = 'production';
+    vi.stubEnv('NODE_ENV', 'production');
     process.env.BEO_API_BASE = 'https://dev-app.beonedge.in/api/';
 
     expect(serverEnv.appApiBase()).toBe('https://dev-app.beonedge.in/api');
@@ -23,7 +23,7 @@ describe('serverEnv.appApiBase', () => {
     'https://dev-app.beonedge.in/not-api',
     'https://user:password@dev-app.beonedge.in/api',
   ])('rejects unsafe production backend URL %s', (value) => {
-    process.env.NODE_ENV = 'production';
+    vi.stubEnv('NODE_ENV', 'production');
     process.env.BEO_API_BASE = value;
 
     expect(() => serverEnv.appApiBase()).toThrow(/BEO_API_BASE/u);

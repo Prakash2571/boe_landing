@@ -149,6 +149,23 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       console.error('[newuser] could not reach the app backend at BEO_API_BASE');
       return json({ ok: false, message: GENERIC_RETRY }, 503);
 
+    case 'BACKEND_TIMEOUT':
+      /*
+       * The app answered nothing within 20s — most likely an overloaded backend
+       * under a burst of parallel signups. The fetch gives up before nginx's 30s
+       * proxy_read_timeout precisely so THIS reply (parseable JSON with retry
+       * wording) reaches the browser instead of a bare HTML 504 the form cannot
+       * read.
+       */
+      console.error('[newuser] the app backend did not answer within 20s');
+      return json(
+        {
+          ok: false,
+          message: 'The signup service is taking too long to respond. Please try again in a moment.',
+        },
+        504,
+      );
+
     case 'DEPENDENCY_UNAVAILABLE':
       /*
        * Something the app needs to accept a signup is down — most often the

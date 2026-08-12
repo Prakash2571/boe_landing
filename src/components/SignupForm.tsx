@@ -37,6 +37,7 @@ export default function SignupForm() {
   const [errors, setErrors] = useState<SignupErrors>({});
   const [status, setStatus] = useState<Status>({ kind: 'idle' });
   const [showPasswords, setShowPasswords] = useState(false);
+  const [slowHint, setSlowHint] = useState(false);
 
   function update<K extends keyof typeof values>(key: K, value: typeof values[K]) {
     setValues((prev) => ({ ...prev, [key]: value }));
@@ -53,6 +54,12 @@ export default function SignupForm() {
     }
 
     setStatus({ kind: 'submitting' });
+    setSlowHint(false);
+    // Parallel signups can keep the backend busy for many seconds, and the
+    // button label alone ('Submitting...') looks frozen after a while. Show a
+    // "still working" note if nothing has resolved within ~8 seconds; the timer
+    // is cleared in finally so it can never fire after the status has moved on.
+    const slowTimer = setTimeout(() => setSlowHint(true), 8_000);
     try {
       const response = await fetch('/api/newuser', {
         method: 'POST',
@@ -60,6 +67,11 @@ export default function SignupForm() {
         // Send the normalised values, not the raw ones: the phone the visitor
         // typed becomes E.164 here, which is the only form the app accepts.
         body: JSON.stringify(result.values),
+        // Client-side safety net: the server gives up at ~20s, but if anything
+        // in between (nginx, a hung socket) keeps the request open past 45s the
+        // visitor would otherwise wait forever. This rejects with a
+        // TimeoutError, handled in the catch below.
+        signal: AbortSignal.timeout(45_000),
       });
 
       let payload: ApiResponse = {};
@@ -73,10 +85,18 @@ export default function SignupForm() {
         // Re-surface per-field messages from the server when it sent them, so a
         // rule the browser did not catch still lands on the right input.
         if (payload.fields) setErrors(payload.fields as SignupErrors);
-        setStatus({
-          kind: 'error',
-          message: payload.message || 'We could not complete your signup. Please try again.',
-        });
+        // When the payload has no message — e.g. nginx answered with an HTML
+        // error page, which fails JSON parsing above — translate the statuses
+        // with a clear, actionable meaning instead of the generic fallback.
+        // 429 = rate-limited for a minute; 503/504 = the signup service is
+        // overloaded or timed out. Server-sent messages always win.
+        let fallback = 'We could not complete your signup. Please try again.';
+        if (response.status === 429) {
+          fallback = 'Too many signup attempts just now. Please wait a minute and try again.';
+        } else if (response.status === 503 || response.status === 504) {
+          fallback = 'Our signup service is busy right now. Please try again in a moment.';
+        }
+        setStatus({ kind: 'error', message: payload.message || fallback });
         return;
       }
 
@@ -87,11 +107,22 @@ export default function SignupForm() {
         kind: 'done',
         message: payload.message || 'Your application has been submitted for review.',
       });
-    } catch {
+    } catch (error) {
+      // AbortSignal.timeout rejects with a TimeoutError ('AbortError' in older
+      // engines): that is our 45s safety net, not a connectivity problem, so
+      // it deserves its own message rather than the network-failure one.
+      const timedOut =
+        error instanceof DOMException &&
+        (error.name === 'TimeoutError' || error.name === 'AbortError');
       setStatus({
         kind: 'error',
-        message: 'We could not reach our servers. Please check your connection and try again.',
+        message: timedOut
+          ? 'This is taking unusually long. Please try again in a moment.'
+          : 'We could not reach our servers. Please check your connection and try again.',
       });
+    } finally {
+      clearTimeout(slowTimer);
+      setSlowHint(false);
     }
   }
 
@@ -263,6 +294,11 @@ export default function SignupForm() {
       <div aria-live="polite">
         {status.kind === 'error' ? (
           <p className="form__status form__status--error">{status.message}</p>
+        ) : null}
+        {submitting && slowHint ? (
+          <p className="form__hint">
+            Still working — this is taking longer than usual. Please keep this tab open.
+          </p>
         ) : null}
       </div>
     </form>
