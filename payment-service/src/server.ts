@@ -41,6 +41,29 @@ const NEW_SESSION_BLOCKED = new Set(["MAINTENANCE", "PAYMENTS_DRAINING"])
 
 const START_PATH = "/pay/start"
 
+export const handoffPage = (providerCheckoutUrl: string): string => {
+  const target = JSON.stringify(providerCheckoutUrl)
+  return [
+    "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">",
+    "<meta name=\"referrer\" content=\"strict-origin-when-cross-origin\">",
+    "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">",
+    "<title>Continuing to secure payment</title>",
+    "<style>body{font-family:system-ui,sans-serif;margin:0;min-height:100vh;",
+    "display:flex;align-items:center;justify-content:center;color:#1a1a1a}",
+    "p{font-size:15px}</style></head>",
+    "<body><p>Taking you to the secure payment page&hellip;</p>",
+    "<script>",
+    "(function(){var t=", target, ";",
+    "try{window.location.replace(t)}catch(e){window.location.href=t}",
+    "})();",
+    "</script>",
+    "<noscript><p>JavaScript is required. ",
+    "<a href=\"", providerCheckoutUrl.replace(/&/gu, "&amp;").replace(/"/gu, "&quot;"),
+    "\">Continue to payment</a></p></noscript>",
+    "</body></html>",
+  ].join("")
+}
+
 const EXPIRED_PAGE = [
   "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">",
   "<title>Payment link expired</title>",
@@ -305,7 +328,12 @@ export const buildServer = (deps: Deps): FastifyInstance => {
       { merchantOrderId: session.merchantOrderId, service: session.service },
       "payer handed to the provider from the approved origin",
     )
-    return reply.redirect(session.providerCheckoutUrl, 302)
+    return reply
+      .status(200)
+      .type("text/html; charset=utf-8")
+      .header("Cache-Control", "no-store")
+      .header("Referrer-Policy", "strict-origin-when-cross-origin")
+      .send(handoffPage(session.providerCheckoutUrl))
   })
 
   const handleProviderEvent = async (

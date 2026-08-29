@@ -342,15 +342,41 @@ describe("browser-initiated payment start", () => {
     expect(response.json().data.providerReference).toBe("OMO1")
   })
 
-  it("redirects the browser to PhonePe from the approved origin", async () => {
+  it("serves a document that launches the provider, rather than redirecting", async () => {
     const harness = build()
     const created = await harness.app.inject(signed(SESSION, order))
     const token = new URL(created.json().data.checkoutUrl).searchParams.get("t") ?? ""
 
     const response = await harness.app.inject({ method: "GET", url: `/pay/start?t=${token}` })
 
-    expect(response.statusCode).toBe(302)
-    expect(response.headers.location).toContain("mercury-t2.phonepe.com")
+    expect(response.statusCode).toBe(200)
+    expect(response.headers.location).toBeUndefined()
+    expect(response.headers["content-type"]).toContain("text/html")
+    expect(response.body).toContain("mercury-t2.phonepe.com")
+    expect(response.body).toContain("window.location.replace")
+  })
+
+  it("declares a referrer policy that sends this origin to the provider", async () => {
+    const harness = build()
+    const created = await harness.app.inject(signed(SESSION, order))
+    const token = new URL(created.json().data.checkoutUrl).searchParams.get("t") ?? ""
+
+    const response = await harness.app.inject({ method: "GET", url: `/pay/start?t=${token}` })
+
+    expect(response.headers["referrer-policy"]).toBe("strict-origin-when-cross-origin")
+    expect(response.body).toContain('name="referrer" content="strict-origin-when-cross-origin"')
+    expect(response.headers["cache-control"]).toBe("no-store")
+  })
+
+  it("offers a no-script fallback so a blocked script does not strand the payer", async () => {
+    const harness = build()
+    const created = await harness.app.inject(signed(SESSION, order))
+    const token = new URL(created.json().data.checkoutUrl).searchParams.get("t") ?? ""
+
+    const response = await harness.app.inject({ method: "GET", url: `/pay/start?t=${token}` })
+
+    expect(response.body).toContain("<noscript>")
+    expect(response.body).toMatch(/<a href="https:\/\/mercury-t2\.phonepe\.com/u)
   })
 
   it("refuses a reused start link", async () => {
@@ -358,7 +384,7 @@ describe("browser-initiated payment start", () => {
     const created = await harness.app.inject(signed(SESSION, order))
     const token = new URL(created.json().data.checkoutUrl).searchParams.get("t") ?? ""
 
-    expect((await harness.app.inject({ method: "GET", url: `/pay/start?t=${token}` })).statusCode).toBe(302)
+    expect((await harness.app.inject({ method: "GET", url: `/pay/start?t=${token}` })).statusCode).toBe(200)
     expect((await harness.app.inject({ method: "GET", url: `/pay/start?t=${token}` })).statusCode).toBe(410)
   })
 
@@ -380,8 +406,8 @@ describe("browser-initiated payment start", () => {
       url: `/pay/start?t=${token}&amountPaise=5000000&next=https%3A%2F%2Fevil.test`,
     })
 
-    expect(response.headers.location).toContain("mercury-t2.phonepe.com")
-    expect(response.headers.location).not.toContain("evil.test")
+    expect(response.body).toContain("mercury-t2.phonepe.com")
+    expect(response.body).not.toContain("evil.test")
   })
 
   it("never issues a start link when the provider refused the checkout", async () => {
