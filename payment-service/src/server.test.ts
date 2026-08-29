@@ -10,6 +10,7 @@ import {
   GatewayUnavailableError,
 } from "./provider/phonepe/paymentGateway.js"
 import type { PaymentGateway, VerifiedCallback } from "./provider/phonepe/paymentGateway.js"
+import type { RecurringPaymentGateway } from "./provider/phonepe/recurringPaymentGateway.js"
 import { buildServer } from "./server.js"
 
 const SECRET = "0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -46,6 +47,43 @@ const config = (overrides: Partial<ServiceConfig> = {}): ServiceConfig => Object
   eventDeliveryTimeoutMs: 10_000,
   replayWindowSeconds: 300,
   maintenanceState: "NORMAL" as const,
+  ...overrides,
+})
+
+const recurring = (overrides: Partial<RecurringPaymentGateway> = {}): RecurringPaymentGateway => ({
+  createMandateCheckout: vi.fn(async () => ({
+    providerOrderId: "OMO-M1",
+    providerState: "PENDING" as const,
+    redirectUrl: "https://mercury-t2.phonepe.com/transact/pgv3?token=mandate",
+    expiresAt: new Date("2026-09-01T10:15:00.000Z"),
+  })),
+  getSetupOrderStatus: vi.fn(async () => ({
+    state: "COMPLETED" as const,
+    providerOrderId: "OMO-M1",
+    merchantSubscriptionId: "boe-dev_SUB-1",
+    providerSubscriptionId: "PSUB1",
+    paymentDetails: [],
+  })),
+  getMandateStatus: vi.fn(async () => ({
+    state: "ACTIVE" as const,
+    merchantSubscriptionId: "boe-dev_SUB-1",
+    providerSubscriptionId: "PSUB1",
+  })),
+  notifyCollection: vi.fn(async () => ({
+    providerOrderId: "OMO-C1",
+    providerState: "NOTIFICATION_IN_PROGRESS" as const,
+    expiresAt: new Date("2026-09-02T10:00:00.000Z"),
+  })),
+  getCollectionStatus: vi.fn(async () => ({
+    state: "NOTIFIED" as const,
+    merchantOrderId: "boe-dev_COL-1",
+    providerOrderId: "OMO-C1",
+    merchantSubscriptionId: "boe-dev_SUB-1",
+    amountPaise: "100",
+    expiresAt: new Date("2026-09-02T10:00:00.000Z"),
+    paymentDetails: [],
+  })),
+  cancelMandate: vi.fn(async () => undefined),
   ...overrides,
 })
 
@@ -93,11 +131,17 @@ const gateway = (overrides: Partial<PaymentGateway> = {}): PaymentGateway => ({
 })
 
 const build = (
-  overrides: Partial<{ config: ServiceConfig; gateway: PaymentGateway; delivered: boolean }> = {},
+  overrides: Partial<{
+    config: ServiceConfig
+    gateway: PaymentGateway
+    recurring: RecurringPaymentGateway
+    delivered: boolean
+  }> = {},
 ) => {
   const cfg = overrides.config ?? config()
   const gw = overrides.gateway ?? gateway()
-  const runtime: CallerRuntime = Object.freeze({ caller, gateway: gw })
+  const rec = overrides.recurring ?? recurring()
+  const runtime: CallerRuntime = Object.freeze({ caller, gateway: gw, recurring: rec })
   const events: NormalizedEvent[] = []
   const sessionStore = createSessionStore()
   const app = buildServer({
@@ -111,7 +155,7 @@ const build = (
       return overrides.delivered ?? true
     },
   })
-  return { app, gw, events, sessions: sessionStore }
+  return { app, gw, rec, events, sessions: sessionStore }
 }
 
 let nonceCounter = 0
@@ -439,5 +483,118 @@ describe("browser-initiated payment start", () => {
     })
 
     expect(response.statusCode).toBe(401)
+  })
+})
+
+describe("AutoPay", () => {
+  const MANDATE = "/internal/v1/autopay/mandates"
+  const mandate = {
+    merchantOrderId: "boe-dev_SETUP-1",
+    merchantSubscriptionId: "boe-dev_SUB-1",
+    amountPaise: "100",
+    expireAfterSeconds: 900,
+    mandateExpiresAt: "2027-09-01T10:00:00.000Z",
+  }
+
+  it("creates a mandate checkout and returns a start URL on the approved origin", async () => {
+    const harness = build()
+    const response = await harness.app.inject(signed(MANDATE, mandate))
+
+    expect(response.statusCode).toBe(200)
+    const data = response.json().data
+    expect(data.state).toBe("MANDATE_CHECKOUT_CREATED")
+    expect(data.checkoutUrl).toContain("https://www.beonedge.in/pay/start?t=")
+    expect(data.checkoutUrl).not.toContain("phonepe.com")
+    expect(data.providerReference).toBe("OMO-M1")
+  })
+
+  it("supplies its own return URL, never one the caller chose", async () => {
+    const harness = build()
+    await harness.app.inject(signed(MANDATE, { ...mandate, redirectUrl: "https://evil.test" }))
+
+    expect(harness.rec.createMandateCheckout).toHaveBeenCalledWith(
+      expect.objectContaining({ redirectUrl: "https://www.beonedge.in/payment-return" }),
+    )
+  })
+
+  it("launches the mandate page from this origin too", async () => {
+    const harness = build()
+    const created = await harness.app.inject(signed(MANDATE, mandate))
+    const token = new URL(created.json().data.checkoutUrl).searchParams.get("t") ?? ""
+
+    const page = await harness.app.inject({ method: "GET", url: `/pay/start?t=${token}` })
+    expect(page.statusCode).toBe(200)
+    expect(page.body).toContain("mercury-t2.phonepe.com")
+  })
+
+  it("reads mandate setup status, mandate status and cancels", async () => {
+    const harness = build()
+
+    const setup = await harness.app.inject(
+      signed("/internal/v1/autopay/mandates/setup-status", { merchantOrderId: "boe-dev_SETUP-1" }),
+    )
+    expect(setup.json().data.state).toBe("COMPLETED")
+
+    const status = await harness.app.inject(
+      signed("/internal/v1/autopay/mandates/status", { merchantSubscriptionId: "boe-dev_SUB-1" }),
+    )
+    expect(status.json().data.state).toBe("ACTIVE")
+
+    const cancelled = await harness.app.inject(
+      signed("/internal/v1/autopay/mandates/cancel", { merchantSubscriptionId: "boe-dev_SUB-1" }),
+    )
+    expect(cancelled.json().data.state).toBe("CANCEL_REQUESTED")
+    expect(harness.rec.cancelMandate).toHaveBeenCalledWith("boe-dev_SUB-1")
+  })
+
+  it("notifies a collection and reads its status", async () => {
+    const harness = build()
+
+    const notified = await harness.app.inject(signed("/internal/v1/autopay/collections", {
+      merchantOrderId: "boe-dev_COL-1",
+      merchantSubscriptionId: "boe-dev_SUB-1",
+      amountPaise: "100",
+      expireAt: "2026-09-02T10:00:00.000Z",
+    }))
+    expect(notified.json().data.state).toBe("COLLECTION_NOTIFIED")
+    expect(notified.json().data.providerState).toBe("NOTIFICATION_IN_PROGRESS")
+
+    const status = await harness.app.inject(
+      signed("/internal/v1/autopay/collections/status", { merchantOrderId: "boe-dev_COL-1" }),
+    )
+    expect(status.json().data.state).toBe("NOTIFIED")
+    expect(status.json().data.expiresAt).toBe("2026-09-02T10:00:00.000Z")
+  })
+
+  it("refuses every AutoPay route without service authentication", async () => {
+    const harness = build()
+    for (const path of [
+      MANDATE,
+      "/internal/v1/autopay/mandates/setup-status",
+      "/internal/v1/autopay/mandates/status",
+      "/internal/v1/autopay/mandates/cancel",
+      "/internal/v1/autopay/collections",
+      "/internal/v1/autopay/collections/status",
+    ]) {
+      const response = await harness.app.inject({
+        method: "POST",
+        url: path,
+        payload: "{}",
+        headers: { "content-type": "application/json" },
+      })
+      expect(response.statusCode).toBe(401)
+    }
+  })
+
+  it("blocks new mandates and collections during maintenance", async () => {
+    const draining = build({ config: config({ maintenanceState: "MAINTENANCE" }) })
+
+    expect((await draining.app.inject(signed(MANDATE, mandate))).statusCode).toBe(503)
+    expect((await draining.app.inject(signed("/internal/v1/autopay/collections", {
+      merchantOrderId: "boe-dev_COL-1",
+      merchantSubscriptionId: "boe-dev_SUB-1",
+      amountPaise: "100",
+      expireAt: "2026-09-02T10:00:00.000Z",
+    }))).statusCode).toBe(503)
   })
 })

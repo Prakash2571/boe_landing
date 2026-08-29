@@ -37,6 +37,23 @@ const RefundBody = z.object({
 
 const RefundRef = z.object({ merchantRefundId: z.string().min(1).max(63) })
 
+const MandateBody = z.object({
+  merchantOrderId: z.string().min(1).max(63),
+  merchantSubscriptionId: z.string().min(1).max(63),
+  amountPaise: z.string().regex(PAISE),
+  expireAfterSeconds: z.number().int().min(300).max(3600),
+  mandateExpiresAt: z.string().datetime(),
+})
+
+const SubscriptionRef = z.object({ merchantSubscriptionId: z.string().min(1).max(63) })
+
+const CollectionBody = z.object({
+  merchantOrderId: z.string().min(1).max(63),
+  merchantSubscriptionId: z.string().min(1).max(63),
+  amountPaise: z.string().regex(PAISE),
+  expireAt: z.string().datetime(),
+})
+
 const NEW_SESSION_BLOCKED = new Set(["MAINTENANCE", "PAYMENTS_DRAINING"])
 
 const START_PATH = "/pay/start"
@@ -313,6 +330,164 @@ export const buildServer = (deps: Deps): FastifyInstance => {
         ok: false,
         error: { code: "PROVIDER_REFUND_STATUS_FAILED" },
       })
+    }
+  })
+
+  app.post("/internal/v1/autopay/mandates", async (request, reply) => {
+    const runtime = authenticate(request, reply)
+    if (runtime === null) return
+    if (NEW_SESSION_BLOCKED.has(deps.config.maintenanceState)) {
+      return reply.status(503).send({
+        ok: false,
+        error: { code: "PAYMENTS_UNAVAILABLE", maintenanceState: deps.config.maintenanceState },
+      })
+    }
+    const body = parsed(MandateBody, request, reply)
+    if (body === null) return
+
+    try {
+      const created = await runtime.recurring.createMandateCheckout({
+        merchantOrderId: body.merchantOrderId,
+        merchantSubscriptionId: body.merchantSubscriptionId,
+        amountPaise: body.amountPaise,
+        expireAfterSeconds: body.expireAfterSeconds,
+        mandateExpiresAt: new Date(body.mandateExpiresAt),
+        redirectUrl: `${deps.config.publicOrigin}${deps.config.returnPath}`,
+      })
+      const session = deps.sessions.create({
+        service: runtime.caller.service,
+        merchantOrderId: body.merchantOrderId,
+        providerCheckoutUrl: created.redirectUrl,
+        now: deps.clock().getTime(),
+      })
+      request.log.info(
+        { merchantOrderId: body.merchantOrderId, providerOrderId: created.providerOrderId },
+        "mandate checkout created",
+      )
+      return reply.status(200).send({
+        ok: true,
+        data: {
+          state: "MANDATE_CHECKOUT_CREATED",
+          merchantOrderId: body.merchantOrderId,
+          merchantSubscriptionId: body.merchantSubscriptionId,
+          checkoutUrl: `${deps.config.publicOrigin}${START_PATH}?t=${session.token}`,
+          providerReference: created.providerOrderId,
+          providerState: created.providerState,
+          expiresAt: created.expiresAt.toISOString(),
+        },
+      })
+    } catch (error) {
+      request.log.error(
+        { merchantOrderId: body.merchantOrderId, err: (error as Error).name },
+        "mandate checkout failed",
+      )
+      return reply.status(statusForGatewayError(error))
+        .send({ ok: false, error: { code: "PROVIDER_MANDATE_FAILED" } })
+    }
+  })
+
+  app.post("/internal/v1/autopay/mandates/setup-status", async (request, reply) => {
+    const runtime = authenticate(request, reply)
+    if (runtime === null) return
+    const body = parsed(OrderRef, request, reply)
+    if (body === null) return
+    try {
+      const fact = await runtime.recurring.getSetupOrderStatus(body.merchantOrderId)
+      return reply.status(200).send({ ok: true, data: fact })
+    } catch (error) {
+      return reply.status(statusForGatewayError(error))
+        .send({ ok: false, error: { code: "PROVIDER_MANDATE_STATUS_FAILED" } })
+    }
+  })
+
+  app.post("/internal/v1/autopay/mandates/status", async (request, reply) => {
+    const runtime = authenticate(request, reply)
+    if (runtime === null) return
+    const body = parsed(SubscriptionRef, request, reply)
+    if (body === null) return
+    try {
+      const fact = await runtime.recurring.getMandateStatus(body.merchantSubscriptionId)
+      return reply.status(200).send({ ok: true, data: fact })
+    } catch (error) {
+      return reply.status(statusForGatewayError(error))
+        .send({ ok: false, error: { code: "PROVIDER_MANDATE_STATUS_FAILED" } })
+    }
+  })
+
+  app.post("/internal/v1/autopay/mandates/cancel", async (request, reply) => {
+    const runtime = authenticate(request, reply)
+    if (runtime === null) return
+    const body = parsed(SubscriptionRef, request, reply)
+    if (body === null) return
+    try {
+      await runtime.recurring.cancelMandate(body.merchantSubscriptionId)
+      request.log.info({ merchantSubscriptionId: body.merchantSubscriptionId }, "mandate cancelled")
+      return reply.status(200).send({
+        ok: true,
+        data: { state: "CANCEL_REQUESTED", merchantSubscriptionId: body.merchantSubscriptionId },
+      })
+    } catch (error) {
+      return reply.status(statusForGatewayError(error))
+        .send({ ok: false, error: { code: "PROVIDER_MANDATE_CANCEL_FAILED" } })
+    }
+  })
+
+  app.post("/internal/v1/autopay/collections", async (request, reply) => {
+    const runtime = authenticate(request, reply)
+    if (runtime === null) return
+    if (NEW_SESSION_BLOCKED.has(deps.config.maintenanceState)) {
+      return reply.status(503).send({
+        ok: false,
+        error: { code: "PAYMENTS_UNAVAILABLE", maintenanceState: deps.config.maintenanceState },
+      })
+    }
+    const body = parsed(CollectionBody, request, reply)
+    if (body === null) return
+    try {
+      const notified = await runtime.recurring.notifyCollection({
+        merchantOrderId: body.merchantOrderId,
+        merchantSubscriptionId: body.merchantSubscriptionId,
+        amountPaise: body.amountPaise,
+        expireAt: new Date(body.expireAt),
+      })
+      request.log.info(
+        { merchantOrderId: body.merchantOrderId, providerOrderId: notified.providerOrderId },
+        "collection notified",
+      )
+      return reply.status(200).send({
+        ok: true,
+        data: {
+          state: "COLLECTION_NOTIFIED",
+          merchantOrderId: body.merchantOrderId,
+          providerReference: notified.providerOrderId,
+          providerState: notified.providerState,
+          expiresAt: notified.expiresAt.toISOString(),
+        },
+      })
+    } catch (error) {
+      request.log.error(
+        { merchantOrderId: body.merchantOrderId, err: (error as Error).name },
+        "collection notification failed",
+      )
+      return reply.status(statusForGatewayError(error))
+        .send({ ok: false, error: { code: "PROVIDER_COLLECTION_FAILED" } })
+    }
+  })
+
+  app.post("/internal/v1/autopay/collections/status", async (request, reply) => {
+    const runtime = authenticate(request, reply)
+    if (runtime === null) return
+    const body = parsed(OrderRef, request, reply)
+    if (body === null) return
+    try {
+      const fact = await runtime.recurring.getCollectionStatus(body.merchantOrderId)
+      return reply.status(200).send({
+        ok: true,
+        data: { ...fact, expiresAt: fact.expiresAt.toISOString() },
+      })
+    } catch (error) {
+      return reply.status(statusForGatewayError(error))
+        .send({ ok: false, error: { code: "PROVIDER_COLLECTION_STATUS_FAILED" } })
     }
   })
 
