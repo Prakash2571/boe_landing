@@ -44,6 +44,9 @@ services:
       # which would otherwise look like a working deploy until the first signup.
       BEO_API_BASE: ${BEO_API_BASE:?set BEO_API_BASE in .env, including the /api suffix}
       NEWUSER_SHARED_SECRET: ${NEWUSER_SHARED_SECRET:?set NEWUSER_SHARED_SECRET in .env, matching the app stack}
+      # Signs /pay/go links. Must match PAYMENT_START_SECRET on the app stack;
+      # /pay/go refuses every request when it is absent or under 32 characters.
+      PAY_REDIRECT_SECRET: ${PAY_REDIRECT_SECRET:-}
       NODE_ENV: production
       PORT: "3110"
       HOSTNAME: 0.0.0.0
