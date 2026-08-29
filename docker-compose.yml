@@ -55,6 +55,38 @@ services:
     networks:
       - edge
 
+  payments:
+    build:
+      context: ./payment-service
+    image: boe-payment-service:local
+    container_name: boe-payment-service
+    <<: *hardening
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    environment:
+      HOST: 0.0.0.0
+      PORT: "47430"
+      LOG_LEVEL: ${PAYMENTS_LOG_LEVEL:-info}
+      PHONEPE_CLIENT_ID: ${PHONEPE_CLIENT_ID:?set PHONEPE_CLIENT_ID in .env}
+      PHONEPE_CLIENT_SECRET: ${PHONEPE_CLIENT_SECRET:?set PHONEPE_CLIENT_SECRET in .env}
+      PHONEPE_CLIENT_VERSION: ${PHONEPE_CLIENT_VERSION:-1}
+      PHONEPE_MERCHANT_ID: ${PHONEPE_MERCHANT_ID:?set PHONEPE_MERCHANT_ID in .env}
+      PHONEPE_CALLBACK_USERNAME: ${PHONEPE_CALLBACK_USERNAME:?set PHONEPE_CALLBACK_USERNAME in .env}
+      PHONEPE_CALLBACK_PASSWORD: ${PHONEPE_CALLBACK_PASSWORD:?set PHONEPE_CALLBACK_PASSWORD in .env}
+      PHONEPE_API_TIMEOUT_MS: ${PHONEPE_API_TIMEOUT_MS:-10000}
+      PAYMENT_PUBLIC_ORIGIN: ${PAYMENT_PUBLIC_ORIGIN:?set PAYMENT_PUBLIC_ORIGIN in .env}
+      PAYMENT_CALLERS: ${PAYMENT_CALLERS:?set PAYMENT_CALLERS in .env}
+      EVENT_DELIVERY_TIMEOUT_MS: ${EVENT_DELIVERY_TIMEOUT_MS:-10000}
+      REPLAY_WINDOW_SECONDS: ${REPLAY_WINDOW_SECONDS:-300}
+      MAINTENANCE_STATE: ${MAINTENANCE_STATE:-NORMAL}
+    expose:
+      - "47430"
+    ports:
+      - "127.0.0.1:47430:47430"
+    networks:
+      - edge
+
   nginx:
     image: nginx:1.27-alpine
     container_name: boe-landing-nginx

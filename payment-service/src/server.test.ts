@@ -4,6 +4,7 @@ import type { CallerConfig, ServiceConfig } from "./config/env.js"
 import type { NormalizedEvent } from "./events.js"
 import type { CallerRuntime } from "./gateways.js"
 import { createNonceStore, sign } from "./http/serviceAuth.js"
+import { createSessionStore } from "./sessions.js"
 import {
   GatewayAuthenticationError,
   GatewayUnavailableError,
@@ -98,17 +99,19 @@ const build = (
   const gw = overrides.gateway ?? gateway()
   const runtime: CallerRuntime = Object.freeze({ caller, gateway: gw })
   const events: NormalizedEvent[] = []
+  const sessionStore = createSessionStore()
   const app = buildServer({
     config: cfg,
     runtimes: new Map([[caller.service, runtime]]),
     nonces: createNonceStore(cfg.replayWindowSeconds),
+    sessions: sessionStore,
     clock: () => NOW,
     deliver: async (_runtime, event) => {
       events.push(event)
       return overrides.delivered ?? true
     },
   })
-  return { app, gw, events }
+  return { app, gw, events, sessions: sessionStore }
 }
 
 let nonceCounter = 0
@@ -146,7 +149,7 @@ describe("internal payment API", () => {
     expect(response.statusCode).toBe(200)
     const body = response.json()
     expect(body.data.state).toBe("CHECKOUT_CREATED")
-    expect(body.data.checkoutUrl).toContain("mercury-t2.phonepe.com")
+    expect(body.data.checkoutUrl).toContain("https://www.beonedge.in/pay/start?t=")
     expect(body.data.merchantOrderId).toBe("boe-dev_ORDER-1")
   })
 
@@ -310,5 +313,105 @@ describe("browser return", () => {
     const response = await harness.app.inject({ method: "GET", url: "/payment-return?s=stranger" })
 
     expect(response.headers.location).toBe("https://dev-app.beonedge.in/dashboard")
+  })
+})
+
+
+describe("browser-initiated payment start", () => {
+  const SESSION = CHECKOUT
+
+  it("issues a start URL on the approved origin", async () => {
+    const harness = build()
+    const response = await harness.app.inject(signed(SESSION, order))
+
+    expect(response.statusCode).toBe(200)
+    const data = response.json().data
+    expect(data.state).toBe("CHECKOUT_CREATED")
+    const url = new URL(data.checkoutUrl)
+    expect(url.origin).toBe("https://www.beonedge.in")
+    expect(url.pathname).toBe("/pay/start")
+    expect(url.searchParams.get("t")).toBeTruthy()
+  })
+
+  it("hands back a start URL rather than the provider URL", async () => {
+    const harness = build()
+    const response = await harness.app.inject(signed(SESSION, order))
+
+    expect(response.json().data.checkoutUrl).toContain("https://www.beonedge.in/pay/start?t=")
+    expect(response.json().data.checkoutUrl).not.toContain("phonepe.com")
+    expect(response.json().data.providerReference).toBe("OMO1")
+  })
+
+  it("redirects the browser to PhonePe from the approved origin", async () => {
+    const harness = build()
+    const created = await harness.app.inject(signed(SESSION, order))
+    const token = new URL(created.json().data.checkoutUrl).searchParams.get("t") ?? ""
+
+    const response = await harness.app.inject({ method: "GET", url: `/pay/start?t=${token}` })
+
+    expect(response.statusCode).toBe(302)
+    expect(response.headers.location).toContain("mercury-t2.phonepe.com")
+  })
+
+  it("refuses a reused start link", async () => {
+    const harness = build()
+    const created = await harness.app.inject(signed(SESSION, order))
+    const token = new URL(created.json().data.checkoutUrl).searchParams.get("t") ?? ""
+
+    expect((await harness.app.inject({ method: "GET", url: `/pay/start?t=${token}` })).statusCode).toBe(302)
+    expect((await harness.app.inject({ method: "GET", url: `/pay/start?t=${token}` })).statusCode).toBe(410)
+  })
+
+  it("refuses a missing, empty or invented token", async () => {
+    const harness = build()
+
+    for (const url of ["/pay/start", "/pay/start?t=", "/pay/start?t=invented"]) {
+      expect((await harness.app.inject({ method: "GET", url })).statusCode).toBe(410)
+    }
+  })
+
+  it("ignores extra query parameters on the start URL", async () => {
+    const harness = build()
+    const created = await harness.app.inject(signed(SESSION, order))
+    const token = new URL(created.json().data.checkoutUrl).searchParams.get("t") ?? ""
+
+    const response = await harness.app.inject({
+      method: "GET",
+      url: `/pay/start?t=${token}&amountPaise=5000000&next=https%3A%2F%2Fevil.test`,
+    })
+
+    expect(response.headers.location).toContain("mercury-t2.phonepe.com")
+    expect(response.headers.location).not.toContain("evil.test")
+  })
+
+  it("never issues a start link when the provider refused the checkout", async () => {
+    const harness = build({
+      gateway: gateway({
+        createCheckout: vi.fn(async () => {
+          throw new GatewayUnavailableError("down")
+        }),
+      }),
+    })
+
+    expect((await harness.app.inject(signed(SESSION, order))).statusCode).toBe(503)
+    expect(harness.sessions.size()).toBe(0)
+  })
+
+  it("blocks new sessions during maintenance", async () => {
+    const draining = build({ config: config({ maintenanceState: "PAYMENTS_DRAINING" }) })
+
+    expect((await draining.app.inject(signed(SESSION, order))).statusCode).toBe(503)
+  })
+
+  it("requires service authentication to mint a start URL", async () => {
+    const harness = build()
+    const response = await harness.app.inject({
+      method: "POST",
+      url: SESSION,
+      payload: JSON.stringify(order),
+      headers: { "content-type": "application/json" },
+    })
+
+    expect(response.statusCode).toBe(401)
   })
 })

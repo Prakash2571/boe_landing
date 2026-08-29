@@ -10,6 +10,7 @@ import type { NormalizedEvent } from "./events.js"
 import type { CallerRuntime } from "./gateways.js"
 import { authenticateService, sign } from "./http/serviceAuth.js"
 import type { NonceStore } from "./http/serviceAuth.js"
+import type { SessionStore } from "./sessions.js"
 import {
   GatewayAuthenticationError,
   GatewayMalformedCallbackError,
@@ -38,10 +39,21 @@ const RefundRef = z.object({ merchantRefundId: z.string().min(1).max(63) })
 
 const NEW_SESSION_BLOCKED = new Set(["MAINTENANCE", "PAYMENTS_DRAINING"])
 
+const START_PATH = "/pay/start"
+
+const EXPIRED_PAGE = [
+  "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">",
+  "<title>Payment link expired</title>",
+  "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"></head>",
+  "<body><h1>This payment link has expired</h1>",
+  "<p>Please return to the app and start the payment again.</p></body></html>",
+].join("")
+
 type Deps = Readonly<{
   config: ServiceConfig
   runtimes: ReadonlyMap<string, CallerRuntime>
   nonces: NonceStore
+  sessions: SessionStore
   clock: () => Date
   deliver: (runtime: CallerRuntime, event: NormalizedEvent) => Promise<boolean>
 }>
@@ -173,12 +185,18 @@ export const buildServer = (deps: Deps): FastifyInstance => {
         { merchantOrderId: body.merchantOrderId, providerOrderId: created.providerOrderId },
         "checkout created",
       )
+      const session = deps.sessions.create({
+        service: runtime.caller.service,
+        merchantOrderId: body.merchantOrderId,
+        providerCheckoutUrl: created.redirectUrl,
+        now: deps.clock().getTime(),
+      })
       return reply.status(200).send({
         ok: true,
         data: {
           state: "CHECKOUT_CREATED",
           merchantOrderId: body.merchantOrderId,
-          checkoutUrl: created.redirectUrl,
+          checkoutUrl: `${deps.config.publicOrigin}${START_PATH}?t=${session.token}`,
           providerReference: created.providerOrderId,
           expiresAt: created.expiresAt === null ? null : created.expiresAt.toISOString(),
         },
@@ -273,6 +291,21 @@ export const buildServer = (deps: Deps): FastifyInstance => {
         error: { code: "PROVIDER_REFUND_STATUS_FAILED" },
       })
     }
+  })
+
+  app.get(START_PATH, async (request, reply) => {
+    const query = request.query as Record<string, unknown>
+    const token = typeof query.t === "string" ? query.t : ""
+    const session = token === "" ? null : deps.sessions.consume(token, deps.clock().getTime())
+    if (session === null) {
+      request.log.warn("payment start refused: unknown, expired or reused token")
+      return reply.status(410).type("text/html; charset=utf-8").send(EXPIRED_PAGE)
+    }
+    request.log.info(
+      { merchantOrderId: session.merchantOrderId, service: session.service },
+      "payer handed to the provider from the approved origin",
+    )
+    return reply.redirect(session.providerCheckoutUrl, 302)
   })
 
   const handleProviderEvent = async (

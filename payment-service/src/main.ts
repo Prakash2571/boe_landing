@@ -1,6 +1,7 @@
 import { loadConfig } from "./config/env.js"
 import { buildRuntimes } from "./gateways.js"
 import { createNonceStore } from "./http/serviceAuth.js"
+import { createSessionStore } from "./sessions.js"
 import { buildServer, deliverEvent } from "./server.js"
 
 const config = loadConfig()
@@ -10,6 +11,7 @@ const app = buildServer({
   config,
   runtimes,
   nonces: createNonceStore(config.replayWindowSeconds),
+  sessions: createSessionStore(),
   clock: () => new Date(),
   deliver: (runtime, event) => deliverEvent(config, runtime, event),
 })
