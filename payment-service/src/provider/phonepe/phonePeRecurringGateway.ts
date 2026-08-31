@@ -61,6 +61,11 @@ const json = async (response: Response): Promise<unknown> => {
   }
 }
 
+const NOT_FOUND_CODE = /_NOT_FOUND$/u
+
+const providerErrorCode = (body: unknown): string | null =>
+  isRecord(body) && typeof body.code === "string" ? body.code : null
+
 const bodyOf = async (response: Response): Promise<unknown> => {
   if (response.ok) return json(response)
   if (response.status === 401 || response.status === 403) {
@@ -68,7 +73,13 @@ const bodyOf = async (response: Response): Promise<unknown> => {
   }
   if (response.status === 404) throw new GatewayNotFoundError("the provider order was not found")
   if (response.status === 429) throw new GatewayThrottledError("the provider throttled the request")
-  if (response.status < 500) throw new GatewayRejectedError("the provider rejected the request")
+  if (response.status < 500) {
+    const code = providerErrorCode(await json(response))
+    if (code !== null && NOT_FOUND_CODE.test(code)) {
+      throw new GatewayNotFoundError("the provider does not know this reference")
+    }
+    throw new GatewayRejectedError("the provider rejected the request")
+  }
   throw new GatewayUnavailableError("the provider call failed; retry later", { cause: { httpStatusCode: response.status } })
 }
 
