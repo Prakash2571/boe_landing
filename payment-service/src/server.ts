@@ -13,9 +13,11 @@ import type { NonceStore } from "./http/serviceAuth.js"
 import type { SessionStore } from "./sessions.js"
 import {
   GatewayAuthenticationError,
+  GatewayCredentialError,
   GatewayMalformedCallbackError,
   GatewayNotFoundError,
   GatewayRejectedError,
+  GatewayThrottledError,
   GatewayUnavailableError,
 } from "./provider/phonepe/paymentGateway.js"
 
@@ -104,6 +106,8 @@ const rawBodyOf = (request: FastifyRequest): string =>
 const statusForGatewayError = (error: unknown): number => {
   if (error instanceof GatewayRejectedError) return 422
   if (error instanceof GatewayNotFoundError) return 404
+  if (error instanceof GatewayThrottledError) return 429
+  if (error instanceof GatewayCredentialError) return 502
   if (error instanceof GatewayUnavailableError) return 503
   return 500
 }

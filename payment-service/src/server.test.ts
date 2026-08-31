@@ -7,6 +7,8 @@ import { createNonceStore, sign } from "./http/serviceAuth.js"
 import { createSessionStore } from "./sessions.js"
 import {
   GatewayAuthenticationError,
+  GatewayCredentialError,
+  GatewayThrottledError,
   GatewayUnavailableError,
 } from "./provider/phonepe/paymentGateway.js"
 import type { PaymentGateway, VerifiedCallback } from "./provider/phonepe/paymentGateway.js"
@@ -250,6 +252,34 @@ describe("internal payment API", () => {
 
     expect(response.statusCode).toBe(503)
     expect(response.json().error.code).toBe("PROVIDER_CHECKOUT_FAILED")
+  })
+
+  it("keeps provider throttling distinguishable from a generic outage", async () => {
+    const throttled = build({
+      gateway: gateway({
+        createCheckout: vi.fn(async () => {
+          throw new GatewayThrottledError("slow down")
+        }),
+      }),
+    })
+
+    const response = await throttled.app.inject(signed(CHECKOUT, order))
+
+    expect(response.statusCode).toBe(429)
+  })
+
+  it("keeps a provider credential rejection distinct from a transient outage", async () => {
+    const badCredentials = build({
+      gateway: gateway({
+        createCheckout: vi.fn(async () => {
+          throw new GatewayCredentialError("the provider rejected gateway credentials")
+        }),
+      }),
+    })
+
+    const response = await badCredentials.app.inject(signed(CHECKOUT, order))
+
+    expect(response.statusCode).toBe(502)
   })
 
   it("blocks new checkouts during maintenance but keeps status readable", async () => {
