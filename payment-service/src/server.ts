@@ -7,6 +7,7 @@ import { z } from "zod"
 import type { ServiceConfig } from "./config/env.js"
 import { normalizeCallback } from "./events.js"
 import type { NormalizedEvent } from "./events.js"
+import { returnUrlFor } from "./gateways.js"
 import type { CallerRuntime } from "./gateways.js"
 import { authenticateService, sign } from "./http/serviceAuth.js"
 import type { NonceStore } from "./http/serviceAuth.js"
@@ -356,7 +357,7 @@ export const buildServer = (deps: Deps): FastifyInstance => {
         amountPaise: body.amountPaise,
         expireAfterSeconds: body.expireAfterSeconds,
         mandateExpiresAt: new Date(body.mandateExpiresAt),
-        redirectUrl: `${deps.config.publicOrigin}${deps.config.returnPath}`,
+        redirectUrl: returnUrlFor(deps.config, runtime.caller.service),
       })
       const session = deps.sessions.create({
         service: runtime.caller.service,

@@ -10,6 +10,11 @@ export const CHECKOUT_ALLOWED_ORIGINS: readonly string[] = Object.freeze([
   "https://mercury-uat.phonepe.com",
 ])
 
+export const CHECKOUT_MESSAGE = "BeOnEdge investment"
+
+export const returnUrlFor = (config: ServiceConfig, service: string): string =>
+  `${config.publicOrigin}${config.returnPath}?s=${encodeURIComponent(service)}`
+
 export type CallerRuntime = Readonly<{
   caller: CallerConfig
   gateway: PaymentGateway
@@ -40,7 +45,8 @@ export const buildRuntimes = (config: ServiceConfig): ReadonlyMap<string, Caller
           callbackUsername: config.phonepe.callbackUsername,
           callbackPassword: config.phonepe.callbackPassword,
           callbackUrl: `${config.publicOrigin}${config.callbackPaths.payment}`,
-          checkoutRedirectUrl: `${config.publicOrigin}${config.returnPath}`,
+          checkoutRedirectUrl: returnUrlFor(config, caller.service),
+          checkoutMessage: CHECKOUT_MESSAGE,
           checkoutAllowedOrigins: CHECKOUT_ALLOWED_ORIGINS,
           requestTimeoutMs: config.phonepe.requestTimeoutMs,
         },

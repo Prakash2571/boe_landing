@@ -22,7 +22,7 @@ const caller: CallerConfig = Object.freeze({
   service: "boe-dev",
   secret: SECRET,
   eventsUrl: "https://dev-app.beonedge.in/api/v1/internal/payment-events",
-  returnUrl: "https://dev-app.beonedge.in/dashboard",
+  returnUrl: "https://dev-app.beonedge.in/pay/return",
   phonepeEnv: "production",
 })
 
@@ -138,17 +138,21 @@ const build = (
     gateway: PaymentGateway
     recurring: RecurringPaymentGateway
     delivered: boolean
+    callers: readonly CallerConfig[]
   }> = {},
 ) => {
   const cfg = overrides.config ?? config()
   const gw = overrides.gateway ?? gateway()
   const rec = overrides.recurring ?? recurring()
-  const runtime: CallerRuntime = Object.freeze({ caller, gateway: gw, recurring: rec })
+  const callers = overrides.callers ?? [caller]
   const events: NormalizedEvent[] = []
   const sessionStore = createSessionStore()
   const app = buildServer({
     config: cfg,
-    runtimes: new Map([[caller.service, runtime]]),
+    runtimes: new Map(callers.map((entry): [string, CallerRuntime] => [
+      entry.service,
+      Object.freeze({ caller: entry, gateway: gw, recurring: rec }),
+    ])),
     nonces: createNonceStore(cfg.replayWindowSeconds),
     sessions: sessionStore,
     clock: () => NOW,
@@ -373,20 +377,36 @@ describe("browser return", () => {
 
     const plain = await harness.app.inject({ method: "GET", url: "/payment-return" })
     expect(plain.statusCode).toBe(302)
-    expect(plain.headers.location).toBe("https://dev-app.beonedge.in/dashboard")
+    expect(plain.headers.location).toBe("https://dev-app.beonedge.in/pay/return")
 
     const hostile = await harness.app.inject({
       method: "GET",
       url: "/payment-return?s=boe-dev&returnUrl=https%3A%2F%2Fevil.test",
     })
-    expect(hostile.headers.location).toBe("https://dev-app.beonedge.in/dashboard")
+    expect(hostile.headers.location).toBe("https://dev-app.beonedge.in/pay/return")
   })
 
   it("falls back to the first caller for an unknown service hint", async () => {
     const harness = build()
     const response = await harness.app.inject({ method: "GET", url: "/payment-return?s=stranger" })
 
-    expect(response.headers.location).toBe("https://dev-app.beonedge.in/dashboard")
+    expect(response.headers.location).toBe("https://dev-app.beonedge.in/pay/return")
+  })
+
+  it("sends the payer to the caller named in the query, not to the first one", async () => {
+    const other: CallerConfig = Object.freeze({
+      ...caller,
+      service: "boe-prod",
+      eventsUrl: "https://app.beonedge.in/api/v1/internal/payment-events",
+      returnUrl: "https://app.beonedge.in/pay/return",
+    })
+    const harness = build({ callers: [caller, other] })
+
+    const dev = await harness.app.inject({ method: "GET", url: "/payment-return?s=boe-dev" })
+    const prod = await harness.app.inject({ method: "GET", url: "/payment-return?s=boe-prod" })
+
+    expect(dev.headers.location).toBe("https://dev-app.beonedge.in/pay/return")
+    expect(prod.headers.location).toBe("https://app.beonedge.in/pay/return")
   })
 })
 
@@ -543,7 +563,7 @@ describe("AutoPay", () => {
     await harness.app.inject(signed(MANDATE, { ...mandate, redirectUrl: "https://evil.test" }))
 
     expect(harness.rec.createMandateCheckout).toHaveBeenCalledWith(
-      expect.objectContaining({ redirectUrl: "https://www.beonedge.in/payment-return" }),
+      expect.objectContaining({ redirectUrl: "https://www.beonedge.in/payment-return?s=boe-dev" }),
     )
   })
 

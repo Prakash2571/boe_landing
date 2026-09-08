@@ -79,6 +79,11 @@ const safeDestination = (value: string, name: string): string => {
   return url.toString()
 }
 
+const APP_RETURN_PATH = "/pay/return"
+
+const appReturnUrl = (configuredUrl: string, name: string): string =>
+  new URL(APP_RETURN_PATH, new URL(safeDestination(configuredUrl, name)).origin).toString()
+
 const parseCallers = (raw: string, replayName: string): ReadonlyMap<string, CallerConfig> => {
   let decoded: unknown
   try {
@@ -93,7 +98,7 @@ const parseCallers = (raw: string, replayName: string): ReadonlyMap<string, Call
     map.set(caller.service, Object.freeze({
       ...caller,
       eventsUrl: safeDestination(caller.eventsUrl, `${caller.service}.eventsUrl`),
-      returnUrl: safeDestination(caller.returnUrl, `${caller.service}.returnUrl`),
+      returnUrl: appReturnUrl(caller.returnUrl, `${caller.service}.returnUrl`),
     }))
   }
   return map
