@@ -78,6 +78,29 @@ verify_payment_callback() {
 verify_payment_return() {
     heading "payment return"
 
+    local service service_code service_location service_expected
+    for service in boe-dev boe-prod; do
+        case "$service" in
+            boe-dev) service_expected="https://dev-app.beonedge.in/pay/return" ;;
+            boe-prod) service_expected="https://app.beonedge.in/pay/return" ;;
+        esac
+        service_code="$(http_code "$BOE_WWW/payment-return?s=$service")"
+        service_location="$(http_redirect "$BOE_WWW/payment-return?s=$service")"
+        if [[ "$service_code" == "302" && "$service_location" == "$service_expected" ]]; then
+            pass "/payment-return?s=$service redirects to $service_expected"
+        else
+            fail "/payment-return?s=$service answered $service_code -> ${service_location:-<none>} (expected 302 -> $service_expected)"
+        fi
+    done
+
+    local invalid_query invalid_code
+    for invalid_query in "" "?s=unknown" "?s=boe-dev&s=boe-prod"; do
+        invalid_code="$(http_code "$BOE_WWW/payment-return$invalid_query")"
+        [[ "$invalid_code" == "400" ]] \
+            && pass "/payment-return$invalid_query refuses an unspecified caller" \
+            || fail "/payment-return$invalid_query answered $invalid_code (expected 400)"
+    done
+
     # Each target must reach its OWN app host's return page. The old assertion only
     # looked for "beonedge.in/dashboard", which would have passed even if dev and
     # production had been swapped, and /dashboard is session-guarded so a payer

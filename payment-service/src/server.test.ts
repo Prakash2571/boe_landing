@@ -375,9 +375,10 @@ describe("browser return", () => {
   it("redirects to a configured destination and never to a caller-supplied one", async () => {
     const harness = build()
 
-    const plain = await harness.app.inject({ method: "GET", url: "/payment-return" })
+    const plain = await harness.app.inject({ method: "GET", url: "/payment-return?s=boe-dev" })
     expect(plain.statusCode).toBe(302)
     expect(plain.headers.location).toBe("https://dev-app.beonedge.in/pay/return")
+    expect(plain.headers["cache-control"]).toBe("no-store")
 
     const hostile = await harness.app.inject({
       method: "GET",
@@ -386,11 +387,13 @@ describe("browser return", () => {
     expect(hostile.headers.location).toBe("https://dev-app.beonedge.in/pay/return")
   })
 
-  it("falls back to the first caller for an unknown service hint", async () => {
+  it.each(["", "?s=", "?s=stranger", "?s=boe-dev&s=boe-prod"])("refuses an ambiguous or unknown caller: %s", async (query) => {
     const harness = build()
-    const response = await harness.app.inject({ method: "GET", url: "/payment-return?s=stranger" })
+    const response = await harness.app.inject({ method: "GET", url: `/payment-return${query}` })
 
-    expect(response.headers.location).toBe("https://dev-app.beonedge.in/pay/return")
+    expect(response.statusCode).toBe(400)
+    expect(response.headers.location).toBeUndefined()
+    expect(response.headers["cache-control"]).toBe("no-store")
   })
 
   it("sends the payer to the caller named in the query, not to the first one", async () => {

@@ -571,12 +571,15 @@ export const buildServer = (deps: Deps): FastifyInstance => {
   app.post(deps.config.callbackPaths.subscription, handleProviderEvent)
 
   app.get(deps.config.returnPath, async (request, reply) => {
-    const runtimes = [...deps.runtimes.values()]
-    const first = runtimes[0]
-    if (first === undefined) return reply.status(404).send()
+    reply.header("Cache-Control", "no-store")
     const query = request.query as Record<string, unknown>
     const service = typeof query.s === "string" ? query.s : null
-    const target = service === null ? first : deps.runtimes.get(service) ?? first
+    const target = service === null ? undefined : deps.runtimes.get(service)
+    if (target === undefined) {
+      return reply.status(400).type("text/plain").send(
+        "This payment return link is incomplete. Return to the BeOnEdge app to check your payment.",
+      )
+    }
     return reply.redirect(target.caller.returnUrl, 302)
   })
 
