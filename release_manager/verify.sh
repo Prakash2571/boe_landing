@@ -78,16 +78,34 @@ verify_payment_callback() {
 verify_payment_return() {
     heading "payment return"
 
+    # Each target must reach its OWN app host's return page. The old assertion only
+    # looked for "beonedge.in/dashboard", which would have passed even if dev and
+    # production had been swapped, and /dashboard is session-guarded so a payer
+    # returning in a browser met a sign-in page.
+    local target code location expected
     for target in dev app; do
-        local code location
+        case "$target" in
+            dev) expected="https://dev-app.beonedge.in/pay/return" ;;
+            app) expected="https://app.beonedge.in/pay/return" ;;
+        esac
         code="$(http_code "$BOE_APEX/pay/return/$target")"
         location="$(http_redirect "$BOE_APEX/pay/return/$target")"
-        if [[ "$code" == "302" && "$location" == *"beonedge.in/dashboard" ]]; then
-            pass "/pay/return/$target redirects into the app"
+        if [[ "$code" == "302" && "$location" == "$expected" ]]; then
+            pass "/pay/return/$target redirects to $expected"
         else
-            fail "/pay/return/$target answered $code -> ${location:-<none>}"
+            fail "/pay/return/$target answered $code -> ${location:-<none>} (expected 302 -> $expected)"
         fi
     done
+
+    # The provider appends identifiers the app uses as navigation context, so the
+    # whole search string has to survive the hop.
+    local carried
+    carried="$(http_redirect "$BOE_APEX/pay/return/dev?paymentId=syn-001&sipPlanId=syn-002")"
+    if [[ "$carried" == "https://dev-app.beonedge.in/pay/return?paymentId=syn-001&sipPlanId=syn-002" ]]; then
+        pass "the return hop preserves the provider's query string"
+    else
+        fail "return dropped or rewrote the query string: ${carried:-<none>}"
+    fi
 
     local unknown
     unknown="$(http_code "$BOE_APEX/pay/return/evil")"
