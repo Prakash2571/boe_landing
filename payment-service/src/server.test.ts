@@ -1,12 +1,12 @@
+import { createHash } from "node:crypto"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import type { CallerConfig, ServiceConfig } from "./config/env.js"
-import type { NormalizedEvent } from "./events.js"
+import type { RawCallback } from "./events.js"
 import type { CallerRuntime } from "./gateways.js"
 import { createNonceStore, sign } from "./http/serviceAuth.js"
 import { createSessionStore } from "./sessions.js"
 import {
-  GatewayAuthenticationError,
   GatewayCredentialError,
   GatewayThrottledError,
   GatewayUnavailableError,
@@ -21,7 +21,7 @@ const NOW = new Date("2026-09-01T10:00:00.000Z")
 const caller: CallerConfig = Object.freeze({
   service: "boe-dev",
   secret: SECRET,
-  eventsUrl: "https://dev-app.beonedge.in/api/v1/internal/payment-events",
+  callbackBaseUrl: "https://dev-app.beonedge.in/api/v1/provider-events/phonepe",
   returnUrl: "https://dev-app.beonedge.in/pay/return",
   phonepeEnv: "production",
 })
@@ -44,6 +44,7 @@ const config = (overrides: Partial<ServiceConfig> = {}): ServiceConfig => Object
   callbackPaths: Object.freeze({
     payment: "/api/v1/provider-events/phonepe/payment",
     subscription: "/api/v1/provider-events/phonepe/subscription",
+    refund: "/api/v1/provider-events/phonepe/refund",
   }),
   callers: new Map([[caller.service, caller]]),
   eventDeliveryTimeoutMs: 10_000,
@@ -62,13 +63,13 @@ const recurring = (overrides: Partial<RecurringPaymentGateway> = {}): RecurringP
   getSetupOrderStatus: vi.fn(async () => ({
     state: "COMPLETED" as const,
     providerOrderId: "OMO-M1",
-    merchantSubscriptionId: "boe-dev_SUB-1",
+    merchantSubscriptionId: "boe-dev_subscription_b294870c46134c878709de987abb46d7",
     providerSubscriptionId: "PSUB1",
     paymentDetails: [],
   })),
   getMandateStatus: vi.fn(async () => ({
     state: "ACTIVE" as const,
-    merchantSubscriptionId: "boe-dev_SUB-1",
+    merchantSubscriptionId: "boe-dev_subscription_b294870c46134c878709de987abb46d7",
     providerSubscriptionId: "PSUB1",
   })),
   notifyCollection: vi.fn(async () => ({
@@ -78,9 +79,9 @@ const recurring = (overrides: Partial<RecurringPaymentGateway> = {}): RecurringP
   })),
   getCollectionStatus: vi.fn(async () => ({
     state: "NOTIFIED" as const,
-    merchantOrderId: "boe-dev_COL-1",
+    merchantOrderId: "boe-dev_order_b294870c46134c878709de987abb46d8",
     providerOrderId: "OMO-C1",
-    merchantSubscriptionId: "boe-dev_SUB-1",
+    merchantSubscriptionId: "boe-dev_subscription_b294870c46134c878709de987abb46d7",
     amountPaise: "100",
     expiresAt: new Date("2026-09-02T10:00:00.000Z"),
     paymentDetails: [],
@@ -96,7 +97,7 @@ const gateway = (overrides: Partial<PaymentGateway> = {}): PaymentGateway => ({
     expiresAt: new Date("2026-09-01T10:15:00.000Z"),
   })),
   getOrderStatus: vi.fn(async () => ({
-    merchantOrderId: "boe-dev_ORDER-1",
+    merchantOrderId: "boe-dev_order_b294870c46134c878709de987abb46d7",
     outcome: "succeeded" as const,
     providerState: "COMPLETED",
     providerOrderId: "OMO1",
@@ -108,7 +109,7 @@ const gateway = (overrides: Partial<PaymentGateway> = {}): PaymentGateway => ({
     event: "checkout.order.completed",
     outcome: "succeeded",
     providerState: "COMPLETED",
-    merchantOrderId: "boe-dev_ORDER-1",
+    merchantOrderId: "boe-dev_order_b294870c46134c878709de987abb46d7",
     merchantRefundId: null,
     originalMerchantOrderId: null,
     providerOrderId: "OMO1",
@@ -122,9 +123,9 @@ const gateway = (overrides: Partial<PaymentGateway> = {}): PaymentGateway => ({
     providerState: "PENDING",
   })),
   getRefundStatus: vi.fn(async () => ({
-    merchantRefundId: "BOE-REFUND-1",
+    merchantRefundId: "boe-dev_refund_b294870c46134c878709de987abb46d7",
     providerRefundId: "PR1",
-    originalMerchantOrderId: "boe-dev_ORDER-1",
+    originalMerchantOrderId: "boe-dev_order_b294870c46134c878709de987abb46d7",
     amountPaise: "100",
     outcome: "succeeded" as const,
     providerState: "COMPLETED",
@@ -145,7 +146,8 @@ const build = (
   const gw = overrides.gateway ?? gateway()
   const rec = overrides.recurring ?? recurring()
   const callers = overrides.callers ?? [caller]
-  const events: NormalizedEvent[] = []
+  const events: RawCallback[] = []
+  const destinations: string[] = []
   const sessionStore = createSessionStore()
   const app = buildServer({
     config: cfg,
@@ -156,12 +158,13 @@ const build = (
     nonces: createNonceStore(cfg.replayWindowSeconds),
     sessions: sessionStore,
     clock: () => NOW,
-    deliver: async (_runtime, event) => {
+    deliver: async (runtime, event) => {
+      destinations.push(runtime.caller.service)
       events.push(event)
       return overrides.delivered ?? true
     },
   })
-  return { app, gw, rec, events, sessions: sessionStore }
+  return { app, gw, rec, events, destinations, sessions: sessionStore }
 }
 
 let nonceCounter = 0
@@ -184,7 +187,7 @@ const signed = (path: string, payload: unknown, nonce = `n${String(++nonceCounte
 }
 
 const CHECKOUT = "/internal/v1/payments/checkout"
-const order = { merchantOrderId: "boe-dev_ORDER-1", amountPaise: "100", expireAfterSeconds: 900 }
+const order = { merchantOrderId: "boe-dev_order_b294870c46134c878709de987abb46d7", amountPaise: "100", expireAfterSeconds: 900 }
 
 describe("internal payment API", () => {
   let harness: ReturnType<typeof build>
@@ -200,14 +203,14 @@ describe("internal payment API", () => {
     const body = response.json()
     expect(body.data.state).toBe("CHECKOUT_CREATED")
     expect(body.data.checkoutUrl).toContain("https://www.beonedge.in/pay/start?t=")
-    expect(body.data.merchantOrderId).toBe("boe-dev_ORDER-1")
+    expect(body.data.merchantOrderId).toBe("boe-dev_order_b294870c46134c878709de987abb46d7")
   })
 
   it("passes the caller's merchantOrderId through unchanged", async () => {
     await harness.app.inject(signed(CHECKOUT, order))
 
     expect(harness.gw.createCheckout).toHaveBeenCalledWith(
-      expect.objectContaining({ merchantOrderId: "boe-dev_ORDER-1", amountPaise: "100" }),
+      expect.objectContaining({ merchantOrderId: "boe-dev_order_b294870c46134c878709de987abb46d7", amountPaise: "100" }),
     )
   })
 
@@ -291,14 +294,14 @@ describe("internal payment API", () => {
 
     expect((await draining.app.inject(signed(CHECKOUT, order))).statusCode).toBe(503)
     const status = await draining.app.inject(
-      signed("/internal/v1/payments/status", { merchantOrderId: "boe-dev_ORDER-1" }),
+      signed("/internal/v1/payments/status", { merchantOrderId: "boe-dev_order_b294870c46134c878709de987abb46d7" }),
     )
     expect(status.statusCode).toBe(200)
   })
 
   it("returns normalized status rather than provider vocabulary", async () => {
     const response = await harness.app.inject(
-      signed("/internal/v1/payments/status", { merchantOrderId: "boe-dev_ORDER-1" }),
+      signed("/internal/v1/payments/status", { merchantOrderId: "boe-dev_order_b294870c46134c878709de987abb46d7" }),
     )
 
     expect(response.json().data.status).toBe("SUCCESS")
@@ -308,66 +311,78 @@ describe("internal payment API", () => {
 
 describe("provider callbacks", () => {
   const CALLBACK = "/api/v1/provider-events/phonepe/payment"
+  const AUTH = createHash("sha256").update("u:p").digest("hex")
+  const rawBody = JSON.stringify({ event: "checkout.order.completed", payload: { merchantOrderId: order.merchantOrderId, state: "COMPLETED" } })
+  const headers = { "content-type": "application/json", authorization: AUTH }
 
-  it("verifies, normalizes and forwards a callback", async () => {
+  it("verifies the provider and forwards the exact raw callback", async () => {
     const harness = build()
-    const response = await harness.app.inject({
-      method: "POST",
-      url: CALLBACK,
-      payload: '{"event":"checkout.order.completed"}',
-      headers: { "content-type": "application/json", authorization: "sha256-good" },
-    })
-
+    const raw = ` ${rawBody}\n`
+    const response = await harness.app.inject({ method: "POST", url: CALLBACK, payload: raw, headers })
     expect(response.statusCode).toBe(200)
-    expect(harness.events).toHaveLength(1)
-    expect(harness.events[0]?.type).toBe("PAYMENT_COMPLETED")
-    expect(harness.events[0]?.merchantOrderId).toBe("boe-dev_ORDER-1")
+    expect(harness.events).toEqual([{ kind: "payment", rawBody: raw, authorization: AUTH }])
+    expect(harness.destinations).toEqual(["boe-dev"])
   })
 
-  it("refuses a callback with no authorization header and forwards nothing", async () => {
+  it.each([undefined, "sha256-bad", createHash("sha256").update("wrong:credentials").digest("hex")])("refuses missing or invalid authorization: %s", async (authorization) => {
     const harness = build()
     const response = await harness.app.inject({
-      method: "POST",
-      url: CALLBACK,
-      payload: "{}",
-      headers: { "content-type": "application/json" },
+      method: "POST", url: CALLBACK, payload: rawBody,
+      headers: { "content-type": "application/json", ...(authorization === undefined ? {} : { authorization }) },
     })
-
     expect(response.statusCode).toBe(401)
     expect(harness.events).toHaveLength(0)
   })
 
-  it("refuses a callback whose signature does not verify", async () => {
-    const harness = build({
-      gateway: gateway({
-        validateShaCallback: vi.fn(() => {
-          throw new GatewayAuthenticationError("nope")
-        }),
-      }),
-    })
-    const response = await harness.app.inject({
-      method: "POST",
-      url: CALLBACK,
-      payload: "{}",
-      headers: { "content-type": "application/json", authorization: "sha256-bad" },
-    })
+  it("routes production refund and subscription events arriving at the dashboard payment URL", async () => {
+    const prod = { ...caller, service: "boe-prod", callbackBaseUrl: "https://app.beonedge.in/api/v1/provider-events/phonepe" }
+    const harness = build({ callers: [caller, prod] })
+    const subscription = JSON.stringify({ event: "checkout.order.completed", payload: {
+      merchantOrderId: order.merchantOrderId.replace("boe-dev", "boe-prod"),
+      paymentFlow: { type: "SUBSCRIPTION_CHECKOUT_SETUP", merchantSubscriptionId: order.merchantOrderId.replace("boe-dev_order", "boe-prod_subscription") },
+    } })
+    const refund = JSON.stringify({ event: "pg.refund.completed", payload: {
+      merchantRefundId: order.merchantOrderId.replace("boe-dev_order", "boe-prod_refund"),
+      originalMerchantOrderId: order.merchantOrderId.replace("boe-dev", "boe-prod"),
+    } })
+    for (const payload of [subscription, refund]) {
+      expect((await harness.app.inject({ method: "POST", url: CALLBACK, payload, headers })).statusCode).toBe(200)
+    }
+    expect(harness.destinations).toEqual(["boe-prod", "boe-prod"])
+    expect(harness.events.map((event) => event.kind)).toEqual(["subscription", "refund"])
+  })
 
-    expect(response.statusCode).toBe(401)
-    expect(response.json().error.code).toBe("PROVIDER_CALLBACK_UNVERIFIED")
+  it.each(["subscription", "refund"])("accepts the dedicated %s ingress", async (kind) => {
+    const harness = build()
+    const payload = JSON.stringify({ event: kind === "refund" ? "pg.refund.completed" : "subscription.activated", payload: {
+      [kind === "refund" ? "merchantRefundId" : "merchantSubscriptionId"]: order.merchantOrderId.replace("_order_", `_${kind}_`),
+    } })
+    const response = await harness.app.inject({ method: "POST", url: `/api/v1/provider-events/phonepe/${kind}`, payload, headers })
+    expect(response.statusCode).toBe(200)
+    expect(harness.events[0]?.kind).toBe(kind)
+  })
+
+  it.each(["{}", "{", rawBody.replace("boe-dev_", "unknown_"), JSON.stringify({ event: "checkout.order.completed", payload: {
+    merchantOrderId: order.merchantOrderId, originalMerchantOrderId: order.merchantOrderId.replace("boe-dev", "boe-prod"),
+  } })])("rejects unroutable callbacks instead of selecting the first caller", async (payload) => {
+    const harness = build()
+    const response = await harness.app.inject({ method: "POST", url: CALLBACK, payload, headers })
+    expect(response.statusCode).toBe(400)
     expect(harness.events).toHaveLength(0)
   })
 
-  it("asks the provider to retry when the app could not be reached", async () => {
+  it("asks the provider to retry when delivery fails", async () => {
     const harness = build({ delivered: false })
-    const response = await harness.app.inject({
-      method: "POST",
-      url: CALLBACK,
-      payload: "{}",
-      headers: { "content-type": "application/json", authorization: "sha256-good" },
-    })
-
+    const response = await harness.app.inject({ method: "POST", url: CALLBACK, payload: rawBody, headers })
     expect(response.statusCode).toBe(503)
     expect(response.json().error.code).toBe("EVENT_NOT_DELIVERED")
+  })
+
+  it("prevents an authenticated dev caller from creating production references", async () => {
+    const harness = build()
+    const response = await harness.app.inject(signed(CHECKOUT, { ...order, merchantOrderId: order.merchantOrderId.replace("boe-dev", "boe-prod") }))
+    expect(response.statusCode).toBe(400)
+    expect(harness.gw.createCheckout).not.toHaveBeenCalled()
   })
 })
 
@@ -400,7 +415,7 @@ describe("browser return", () => {
     const other: CallerConfig = Object.freeze({
       ...caller,
       service: "boe-prod",
-      eventsUrl: "https://app.beonedge.in/api/v1/internal/payment-events",
+      callbackBaseUrl: "https://app.beonedge.in/api/v1/provider-events/phonepe",
       returnUrl: "https://app.beonedge.in/pay/return",
     })
     const harness = build({ callers: [caller, other] })
@@ -542,8 +557,8 @@ describe("browser-initiated payment start", () => {
 describe("AutoPay", () => {
   const MANDATE = "/internal/v1/autopay/mandates"
   const mandate = {
-    merchantOrderId: "boe-dev_SETUP-1",
-    merchantSubscriptionId: "boe-dev_SUB-1",
+    merchantOrderId: "boe-dev_order_b294870c46134c878709de987abb46d9",
+    merchantSubscriptionId: "boe-dev_subscription_b294870c46134c878709de987abb46d7",
     amountPaise: "100",
     expireAfterSeconds: 900,
     mandateExpiresAt: "2027-09-01T10:00:00.000Z",
@@ -584,28 +599,28 @@ describe("AutoPay", () => {
     const harness = build()
 
     const setup = await harness.app.inject(
-      signed("/internal/v1/autopay/mandates/setup-status", { merchantOrderId: "boe-dev_SETUP-1" }),
+      signed("/internal/v1/autopay/mandates/setup-status", { merchantOrderId: "boe-dev_order_b294870c46134c878709de987abb46d9" }),
     )
     expect(setup.json().data.state).toBe("COMPLETED")
 
     const status = await harness.app.inject(
-      signed("/internal/v1/autopay/mandates/status", { merchantSubscriptionId: "boe-dev_SUB-1" }),
+      signed("/internal/v1/autopay/mandates/status", { merchantSubscriptionId: "boe-dev_subscription_b294870c46134c878709de987abb46d7" }),
     )
     expect(status.json().data.state).toBe("ACTIVE")
 
     const cancelled = await harness.app.inject(
-      signed("/internal/v1/autopay/mandates/cancel", { merchantSubscriptionId: "boe-dev_SUB-1" }),
+      signed("/internal/v1/autopay/mandates/cancel", { merchantSubscriptionId: "boe-dev_subscription_b294870c46134c878709de987abb46d7" }),
     )
     expect(cancelled.json().data.state).toBe("CANCEL_REQUESTED")
-    expect(harness.rec.cancelMandate).toHaveBeenCalledWith("boe-dev_SUB-1")
+    expect(harness.rec.cancelMandate).toHaveBeenCalledWith("boe-dev_subscription_b294870c46134c878709de987abb46d7")
   })
 
   it("notifies a collection and reads its status", async () => {
     const harness = build()
 
     const notified = await harness.app.inject(signed("/internal/v1/autopay/collections", {
-      merchantOrderId: "boe-dev_COL-1",
-      merchantSubscriptionId: "boe-dev_SUB-1",
+      merchantOrderId: "boe-dev_order_b294870c46134c878709de987abb46d8",
+      merchantSubscriptionId: "boe-dev_subscription_b294870c46134c878709de987abb46d7",
       amountPaise: "100",
       expireAt: "2026-09-02T10:00:00.000Z",
     }))
@@ -613,7 +628,7 @@ describe("AutoPay", () => {
     expect(notified.json().data.providerState).toBe("NOTIFICATION_IN_PROGRESS")
 
     const status = await harness.app.inject(
-      signed("/internal/v1/autopay/collections/status", { merchantOrderId: "boe-dev_COL-1" }),
+      signed("/internal/v1/autopay/collections/status", { merchantOrderId: "boe-dev_order_b294870c46134c878709de987abb46d8" }),
     )
     expect(status.json().data.state).toBe("NOTIFIED")
     expect(status.json().data.expiresAt).toBe("2026-09-02T10:00:00.000Z")
@@ -644,8 +659,8 @@ describe("AutoPay", () => {
 
     expect((await draining.app.inject(signed(MANDATE, mandate))).statusCode).toBe(503)
     expect((await draining.app.inject(signed("/internal/v1/autopay/collections", {
-      merchantOrderId: "boe-dev_COL-1",
-      merchantSubscriptionId: "boe-dev_SUB-1",
+      merchantOrderId: "boe-dev_order_b294870c46134c878709de987abb46d8",
+      merchantSubscriptionId: "boe-dev_subscription_b294870c46134c878709de987abb46d7",
       amountPaise: "100",
       expireAt: "2026-09-02T10:00:00.000Z",
     }))).statusCode).toBe(503)

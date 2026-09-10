@@ -91,7 +91,7 @@ services:
       - "127.0.0.1:47430:47430"
     networks:
       - edge
-      - app_stack
+      - payment_api
 
   nginx:
     image: nginx:1.27-alpine
@@ -129,10 +129,6 @@ services:
 networks:
   edge:
     driver: bridge
-  # The app stack's own network, created by its compose project. Declared
-  # external so the backend can resolve boe-payment-service by name over a
-  # private network instead of the public internet. It is created elsewhere, so
-  # this file must not try to own it.
-  app_stack:
+  payment_api:
     external: true
-    name: ${APP_STACK_NETWORK:-boe_dev_frontend}
+    name: boe_payments

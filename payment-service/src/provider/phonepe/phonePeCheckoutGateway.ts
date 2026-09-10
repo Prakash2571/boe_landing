@@ -141,7 +141,7 @@ const statusMerchantOrderId = (body: Record<string, unknown>, requestedMerchantO
   return echoedMerchantOrderId
 }
 
-const verifyCallbackAuthorization = (username: string, password: string, authorization: string): boolean => {
+export const verifyCallbackAuthorization = (username: string, password: string, authorization: string): boolean => {
   const expected = createHash("sha256").update(`${username}:${password}`).digest()
   if (!/^[0-9a-fA-F]{64}$/u.test(authorization)) return false
   const supplied = Buffer.from(authorization, "hex")

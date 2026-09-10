@@ -118,7 +118,7 @@ cmd_gates() {
             && npx tsc -p tsconfig.json --noEmit >/dev/null 2>&1 \
             && npx vitest run >/dev/null 2>&1 ) \
             && pass "payment-service typecheck and tests passed" \
-            || warn "payment-service gates did not pass (it is not deployed by default)"
+            || { fail "payment-service gates did not pass"; return 1; }
     fi
 }
 

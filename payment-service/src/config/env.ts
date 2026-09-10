@@ -1,9 +1,9 @@
 import { z } from "zod"
 
 const CallerSchema = z.object({
-  service: z.string().min(1),
+  service: z.enum(["boe-dev", "boe-prod"]),
   secret: z.string().min(32),
-  eventsUrl: z.string().url(),
+  callbackBaseUrl: z.string().url(),
   returnUrl: z.string().url(),
   phonepeEnv: z.enum(["sandbox", "production"]),
 })
@@ -47,7 +47,7 @@ export type ServiceConfig = Readonly<{
   }>
   publicOrigin: string
   returnPath: string
-  callbackPaths: Readonly<{ payment: string; subscription: string }>
+  callbackPaths: Readonly<{ payment: string; subscription: string; refund: string }>
   callers: ReadonlyMap<string, CallerConfig>
   eventDeliveryTimeoutMs: number
   replayWindowSeconds: number
@@ -79,6 +79,16 @@ const safeDestination = (value: string, name: string): string => {
   return url.toString()
 }
 
+const callbackDestination = (value: string, service: string): string => {
+  const name = `${service}.callbackBaseUrl`
+  const url = new URL(safeDestination(value, name))
+  const expectedOrigin = service === "boe-prod" ? "https://app.beonedge.in" : "https://dev-app.beonedge.in"
+  if (url.origin !== expectedOrigin || url.pathname !== "/api/v1/provider-events/phonepe" || url.search !== "" || url.toString() !== value) {
+    throw new Error(`${name} must be a canonical callback base ending /api/v1/provider-events/phonepe`)
+  }
+  return value
+}
+
 const APP_RETURN_PATH = "/pay/return"
 
 const appReturnUrl = (configuredUrl: string, name: string): string =>
@@ -97,7 +107,7 @@ const parseCallers = (raw: string, replayName: string): ReadonlyMap<string, Call
     if (map.has(caller.service)) throw new Error(`${replayName} declares ${caller.service} twice`)
     map.set(caller.service, Object.freeze({
       ...caller,
-      eventsUrl: safeDestination(caller.eventsUrl, `${caller.service}.eventsUrl`),
+      callbackBaseUrl: callbackDestination(caller.callbackBaseUrl, caller.service),
       returnUrl: appReturnUrl(caller.returnUrl, `${caller.service}.returnUrl`),
     }))
   }
@@ -124,6 +134,7 @@ export const loadConfig = (source: NodeJS.ProcessEnv = process.env): ServiceConf
     callbackPaths: Object.freeze({
       payment: "/api/v1/provider-events/phonepe/payment",
       subscription: "/api/v1/provider-events/phonepe/subscription",
+      refund: "/api/v1/provider-events/phonepe/refund",
     }),
     callers: parseCallers(parsed.PAYMENT_CALLERS, "PAYMENT_CALLERS"),
     eventDeliveryTimeoutMs: parsed.EVENT_DELIVERY_TIMEOUT_MS,

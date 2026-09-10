@@ -1,104 +1,71 @@
-import { randomUUID } from "node:crypto"
+import { z } from "zod"
 
-import type { ProviderOutcome, VerifiedCallback } from "./provider/phonepe/paymentGateway.js"
+export type CallbackKind = "payment" | "subscription" | "refund"
+export type RawCallback = Readonly<{ kind: CallbackKind; rawBody: string; authorization: string }>
 
-export type NormalizedEventType =
-  | "PAYMENT_COMPLETED"
-  | "PAYMENT_FAILED"
-  | "PAYMENT_PENDING"
-  | "REFUND_COMPLETED"
-  | "REFUND_FAILED"
-  | "REFUND_PENDING"
-  | "MANDATE_ACTIVATED"
-  | "MANDATE_FAILED"
-  | "MANDATE_PENDING"
-  | "AUTOPAY_COLLECTION_COMPLETED"
-  | "AUTOPAY_COLLECTION_FAILED"
-  | "AUTOPAY_COLLECTION_PENDING"
+const REFERENCE_KEYS = ["merchantOrderId", "merchantSubscriptionId", "merchantRefundId", "originalMerchantOrderId"] as const
+const REFERENCE_PATTERN = /^(?<service>boe-dev|boe-prod)_(?:order|subscription|refund)_[0-9a-f]{32}$/u
+const CallbackSchema = z.object({ event: z.string().min(1), payload: z.record(z.unknown()) })
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === "object" && !Array.isArray(value)
 
-export type NormalizedStatus = "SUCCESS" | "FAILED" | "PENDING"
+const referencesOf = (payload: Record<string, unknown>): readonly unknown[] => [
+  ...REFERENCE_KEYS.filter((key) => payload[key] !== undefined && payload[key] !== null).map((key) => payload[key]),
+  ...(isRecord(payload.paymentFlow) ? referencesOf(payload.paymentFlow) : []),
+  ...(isRecord(payload.subscriptionDetails) ? referencesOf(payload.subscriptionDetails) : []),
+]
 
-export type NormalizedEvent = Readonly<{
-  eventId: string
-  type: NormalizedEventType
-  status: NormalizedStatus
-  merchantOrderId: string | null
-  merchantRefundId: string | null
-  originalMerchantOrderId: string | null
-  providerReference: string | null
-  amountPaise: string | null
-  providerState: string
-  providerEvent: string
-  occurredAt: string
-  details: readonly Readonly<{
-    transactionId: string
-    reference: string | null
-    instrumentType: string | null
-    state: string | null
-    amountPaise: string | null
-  }>[]
-}>
-
-const STATUS_OF: Readonly<Record<ProviderOutcome, NormalizedStatus>> = Object.freeze({
-  succeeded: "SUCCESS",
-  failed: "FAILED",
-  pending: "PENDING",
-})
-
-type Family = "payment" | "refund" | "mandate" | "collection"
-
-const familyOf = (providerEvent: string, callback: VerifiedCallback): Family => {
-  const event = providerEvent.toLowerCase()
-  if (event.includes("refund")) return "refund"
-  if (callback.merchantRefundId !== null) return "refund"
-  if (event.includes("subscription.notification") || event.includes("redemption")) return "collection"
-  if (event.includes("subscription") || event.includes("setup")) return "mandate"
-  return "payment"
+export const resolveReferenceService = (payload: Record<string, unknown>, services: readonly string[]): string => {
+  const references = referencesOf(payload)
+  if (references.length === 0) throw new Error("callback has no merchant reference")
+  const owners = references.map((reference) => {
+    const service = typeof reference === "string" ? REFERENCE_PATTERN.exec(reference)?.groups?.service : undefined
+    if (service === undefined || !services.includes(service)) throw new Error("unrecognized merchant reference")
+    return service
+  })
+  const owner = owners[0]
+  if (owner === undefined || owners.some((service) => service !== owner)) throw new Error("conflicting merchant references")
+  return owner
 }
 
-const TYPE_OF: Readonly<Record<Family, Readonly<Record<NormalizedStatus, NormalizedEventType>>>> =
-  Object.freeze({
-    payment: Object.freeze({
-      SUCCESS: "PAYMENT_COMPLETED",
-      FAILED: "PAYMENT_FAILED",
-      PENDING: "PAYMENT_PENDING",
-    }),
-    refund: Object.freeze({
-      SUCCESS: "REFUND_COMPLETED",
-      FAILED: "REFUND_FAILED",
-      PENDING: "REFUND_PENDING",
-    }),
-    mandate: Object.freeze({
-      SUCCESS: "MANDATE_ACTIVATED",
-      FAILED: "MANDATE_FAILED",
-      PENDING: "MANDATE_PENDING",
-    }),
-    collection: Object.freeze({
-      SUCCESS: "AUTOPAY_COLLECTION_COMPLETED",
-      FAILED: "AUTOPAY_COLLECTION_FAILED",
-      PENDING: "AUTOPAY_COLLECTION_PENDING",
-    }),
-  })
+const callbackKind = (event: string, payload: Record<string, unknown>): CallbackKind => {
+  const flow = isRecord(payload.paymentFlow) ? payload.paymentFlow.type : undefined
+  if (event.startsWith("pg.refund.") || event.startsWith("refund.")) return "refund"
+  if (event.startsWith("subscription.") || event.startsWith("checkout.setup.") || event.startsWith("checkout.redemption.")) {
+    return "subscription"
+  }
+  if (event.startsWith("checkout.order.")) {
+    if (flow === "SUBSCRIPTION_CHECKOUT_SETUP" || flow === "SUBSCRIPTION_CHECKOUT_REDEMPTION" || flow === "SUBSCRIPTION_REDEMPTION") return "subscription"
+    if (flow === undefined || flow === "PG_CHECKOUT") return "payment"
+  }
+  throw new Error("unsupported provider event")
+}
 
-export const normalizeCallback = (
-  callback: VerifiedCallback,
-  now: Date,
-  eventId: string = randomUUID(),
-): NormalizedEvent => {
-  const status = STATUS_OF[callback.outcome]
-  const family = familyOf(callback.event, callback)
-  return Object.freeze({
-    eventId,
-    type: TYPE_OF[family][status],
-    status,
-    merchantOrderId: callback.merchantOrderId,
-    merchantRefundId: callback.merchantRefundId,
-    originalMerchantOrderId: callback.originalMerchantOrderId,
-    providerReference: callback.providerOrderId ?? callback.providerRefundId,
-    amountPaise: callback.amountPaise,
-    providerState: callback.providerState,
-    providerEvent: callback.event,
-    occurredAt: now.toISOString(),
-    details: callback.details.map((detail) => Object.freeze({ ...detail })),
-  })
+export const resolveCallbackRoute = (rawBody: string, services: readonly string[]): Readonly<{ service: string; kind: CallbackKind }> => {
+  const { event, payload } = CallbackSchema.parse(JSON.parse(rawBody))
+  return Object.freeze({ service: resolveReferenceService(payload, services), kind: callbackKind(event, payload) })
+}
+
+export const deliverCallback = async (
+  callbackBaseUrl: string,
+  callback: RawCallback,
+  timeoutMs: number,
+): Promise<boolean> => {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const response = await fetch(`${callbackBaseUrl}/${callback.kind}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: callback.authorization },
+      body: callback.rawBody,
+      signal: controller.signal,
+      redirect: "error",
+    })
+    await response.body?.cancel()
+    return response.ok
+  } catch {
+    return false
+  } finally {
+    clearTimeout(timer)
+  }
 }

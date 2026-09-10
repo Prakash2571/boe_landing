@@ -1,21 +1,18 @@
-import { randomUUID } from "node:crypto"
-
 import Fastify from "fastify"
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify"
 import { z } from "zod"
 
 import type { ServiceConfig } from "./config/env.js"
-import { normalizeCallback } from "./events.js"
-import type { NormalizedEvent } from "./events.js"
+import { resolveCallbackRoute, resolveReferenceService } from "./events.js"
+import type { RawCallback } from "./events.js"
+import { verifyCallbackAuthorization } from "./provider/phonepe/phonePeCheckoutGateway.js"
 import { returnUrlFor } from "./gateways.js"
 import type { CallerRuntime } from "./gateways.js"
-import { authenticateService, sign } from "./http/serviceAuth.js"
+import { authenticateService } from "./http/serviceAuth.js"
 import type { NonceStore } from "./http/serviceAuth.js"
 import type { SessionStore } from "./sessions.js"
 import {
-  GatewayAuthenticationError,
   GatewayCredentialError,
-  GatewayMalformedCallbackError,
   GatewayNotFoundError,
   GatewayRejectedError,
   GatewayThrottledError,
@@ -98,7 +95,7 @@ type Deps = Readonly<{
   nonces: NonceStore
   sessions: SessionStore
   clock: () => Date
-  deliver: (runtime: CallerRuntime, event: NormalizedEvent) => Promise<boolean>
+  deliver: (runtime: CallerRuntime, event: RawCallback) => Promise<boolean>
 }>
 
 const rawBodyOf = (request: FastifyRequest): string =>
@@ -111,40 +108,6 @@ const statusForGatewayError = (error: unknown): number => {
   if (error instanceof GatewayCredentialError) return 502
   if (error instanceof GatewayUnavailableError) return 503
   return 500
-}
-
-export const deliverEvent = async (
-  config: ServiceConfig,
-  runtime: CallerRuntime,
-  event: NormalizedEvent,
-): Promise<boolean> => {
-  const body = JSON.stringify(event)
-  const path = new URL(runtime.caller.eventsUrl).pathname
-  const timestamp = String(Date.now())
-  const nonce = randomUUID()
-  const controller = new AbortController()
-  const timer = setTimeout(() => {
-    controller.abort()
-  }, config.eventDeliveryTimeoutMs)
-  try {
-    const response = await fetch(runtime.caller.eventsUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-boe-service": "payment-service",
-        "x-boe-timestamp": timestamp,
-        "x-boe-nonce": nonce,
-        "x-boe-signature": sign(runtime.caller.secret, "POST", path, timestamp, nonce, body),
-      },
-      body,
-      signal: controller.signal,
-    })
-    return response.ok
-  } catch {
-    return false
-  } finally {
-    clearTimeout(timer)
-  }
 }
 
 export const buildServer = (deps: Deps): FastifyInstance => {
@@ -186,7 +149,7 @@ export const buildServer = (deps: Deps): FastifyInstance => {
     return runtime
   }
 
-  const parsed = <T>(schema: z.ZodType<T>, request: FastifyRequest, reply: FastifyReply): T | null => {
+  const parsed = <T>(schema: z.ZodType<T>, request: FastifyRequest, reply: FastifyReply, runtime: CallerRuntime): T | null => {
     let decoded: unknown
     try {
       decoded = JSON.parse(rawBodyOf(request))
@@ -197,6 +160,12 @@ export const buildServer = (deps: Deps): FastifyInstance => {
     const result = schema.safeParse(decoded)
     if (!result.success) {
       void reply.status(400).send({ ok: false, error: { code: "INVALID_BODY" } })
+      return null
+    }
+    try {
+      resolveReferenceService(result.data as Record<string, unknown>, [runtime.caller.service])
+    } catch {
+      void reply.status(400).send({ ok: false, error: { code: "INVALID_MERCHANT_REFERENCE" } })
       return null
     }
     return result.data
@@ -216,7 +185,7 @@ export const buildServer = (deps: Deps): FastifyInstance => {
         error: { code: "PAYMENTS_UNAVAILABLE", maintenanceState: deps.config.maintenanceState },
       })
     }
-    const body = parsed(CheckoutBody, request, reply)
+    const body = parsed(CheckoutBody, request, reply, runtime)
     if (body === null) return
 
     try {
@@ -261,7 +230,7 @@ export const buildServer = (deps: Deps): FastifyInstance => {
   app.post("/internal/v1/payments/status", async (request, reply) => {
     const runtime = authenticate(request, reply)
     if (runtime === null) return
-    const body = parsed(OrderRef, request, reply)
+    const body = parsed(OrderRef, request, reply, runtime)
     if (body === null) return
 
     try {
@@ -289,7 +258,7 @@ export const buildServer = (deps: Deps): FastifyInstance => {
   app.post("/internal/v1/payments/refund", async (request, reply) => {
     const runtime = authenticate(request, reply)
     if (runtime === null) return
-    const body = parsed(RefundBody, request, reply)
+    const body = parsed(RefundBody, request, reply, runtime)
     if (body === null) return
 
     try {
@@ -314,7 +283,7 @@ export const buildServer = (deps: Deps): FastifyInstance => {
   app.post("/internal/v1/payments/refund-status", async (request, reply) => {
     const runtime = authenticate(request, reply)
     if (runtime === null) return
-    const body = parsed(RefundRef, request, reply)
+    const body = parsed(RefundRef, request, reply, runtime)
     if (body === null) return
 
     try {
@@ -347,7 +316,7 @@ export const buildServer = (deps: Deps): FastifyInstance => {
         error: { code: "PAYMENTS_UNAVAILABLE", maintenanceState: deps.config.maintenanceState },
       })
     }
-    const body = parsed(MandateBody, request, reply)
+    const body = parsed(MandateBody, request, reply, runtime)
     if (body === null) return
 
     try {
@@ -394,7 +363,7 @@ export const buildServer = (deps: Deps): FastifyInstance => {
   app.post("/internal/v1/autopay/mandates/setup-status", async (request, reply) => {
     const runtime = authenticate(request, reply)
     if (runtime === null) return
-    const body = parsed(OrderRef, request, reply)
+    const body = parsed(OrderRef, request, reply, runtime)
     if (body === null) return
     try {
       const fact = await runtime.recurring.getSetupOrderStatus(body.merchantOrderId)
@@ -408,7 +377,7 @@ export const buildServer = (deps: Deps): FastifyInstance => {
   app.post("/internal/v1/autopay/mandates/status", async (request, reply) => {
     const runtime = authenticate(request, reply)
     if (runtime === null) return
-    const body = parsed(SubscriptionRef, request, reply)
+    const body = parsed(SubscriptionRef, request, reply, runtime)
     if (body === null) return
     try {
       const fact = await runtime.recurring.getMandateStatus(body.merchantSubscriptionId)
@@ -422,7 +391,7 @@ export const buildServer = (deps: Deps): FastifyInstance => {
   app.post("/internal/v1/autopay/mandates/cancel", async (request, reply) => {
     const runtime = authenticate(request, reply)
     if (runtime === null) return
-    const body = parsed(SubscriptionRef, request, reply)
+    const body = parsed(SubscriptionRef, request, reply, runtime)
     if (body === null) return
     try {
       await runtime.recurring.cancelMandate(body.merchantSubscriptionId)
@@ -446,7 +415,7 @@ export const buildServer = (deps: Deps): FastifyInstance => {
         error: { code: "PAYMENTS_UNAVAILABLE", maintenanceState: deps.config.maintenanceState },
       })
     }
-    const body = parsed(CollectionBody, request, reply)
+    const body = parsed(CollectionBody, request, reply, runtime)
     if (body === null) return
     try {
       const notified = await runtime.recurring.notifyCollection({
@@ -482,7 +451,7 @@ export const buildServer = (deps: Deps): FastifyInstance => {
   app.post("/internal/v1/autopay/collections/status", async (request, reply) => {
     const runtime = authenticate(request, reply)
     if (runtime === null) return
-    const body = parsed(OrderRef, request, reply)
+    const body = parsed(OrderRef, request, reply, runtime)
     if (body === null) return
     try {
       const fact = await runtime.recurring.getCollectionStatus(body.merchantOrderId)
@@ -524,51 +493,38 @@ export const buildServer = (deps: Deps): FastifyInstance => {
     if (typeof authorization !== "string" || authorization.length === 0) {
       return reply.status(401).send({ ok: false, error: { code: "PROVIDER_CALLBACK_UNVERIFIED" } })
     }
-    const raw = rawBodyOf(request)
-
-    const runtimes = [...deps.runtimes.values()]
-    const first = runtimes[0]
-    if (first === undefined) {
-      return reply.status(500).send({ ok: false, error: { code: "NO_CALLER_CONFIGURED" } })
+    if (!verifyCallbackAuthorization(deps.config.phonepe.callbackUsername, deps.config.phonepe.callbackPassword, authorization)) {
+      return reply.status(401).send({ ok: false, error: { code: "PROVIDER_CALLBACK_UNVERIFIED" } })
     }
-
-    let verified
+    const rawBody = rawBodyOf(request)
+    let route
     try {
-      verified = first.gateway.validateShaCallback(authorization, raw)
-    } catch (error) {
-      const code = error instanceof GatewayAuthenticationError
-        ? "PROVIDER_CALLBACK_UNVERIFIED"
-        : error instanceof GatewayMalformedCallbackError
-          ? "PROVIDER_CALLBACK_MALFORMED"
-          : "PROVIDER_CALLBACK_REJECTED"
-      request.log.warn({ code }, "provider callback refused")
-      return reply.status(code === "PROVIDER_CALLBACK_UNVERIFIED" ? 401 : 400)
-        .send({ ok: false, error: { code } })
+      route = resolveCallbackRoute(rawBody, [...deps.runtimes.keys()])
+    } catch {
+      request.log.warn("provider callback has no unambiguous supported destination")
+      return reply.status(400).send({ ok: false, error: { code: "PROVIDER_CALLBACK_UNROUTABLE" } })
     }
-
-    const event = normalizeCallback(verified, deps.clock())
-    const target = deps.runtimes.get(routeEventTo(verified.merchantOrderId, runtimes)) ?? first
-
-    request.log.info(
-      {
-        eventId: event.eventId,
-        type: event.type,
-        merchantOrderId: event.merchantOrderId,
-        service: target.caller.service,
-      },
-      "provider event verified",
-    )
-
-    const delivered = await deps.deliver(target, event)
-    if (!delivered) {
-      request.log.error({ eventId: event.eventId }, "event delivery failed; asking the provider to retry")
+    const target = deps.runtimes.get(route.service)
+    if (target === undefined) {
       return reply.status(503).send({ ok: false, error: { code: "EVENT_NOT_DELIVERED" } })
     }
-    return reply.status(200).send({ ok: true, data: { eventId: event.eventId } })
+    request.log.info({ service: route.service, kind: route.kind }, "provider callback verified")
+    let delivered = false
+    try {
+      delivered = await deps.deliver(target, { kind: route.kind, rawBody, authorization })
+    } catch {
+      request.log.error({ service: route.service }, "callback transport failed")
+    }
+    if (!delivered) {
+      request.log.error({ service: route.service }, "callback delivery failed; asking the provider to retry")
+      return reply.status(503).send({ ok: false, error: { code: "EVENT_NOT_DELIVERED" } })
+    }
+    return reply.status(200).send({ ok: true })
   }
 
   app.post(deps.config.callbackPaths.payment, handleProviderEvent)
   app.post(deps.config.callbackPaths.subscription, handleProviderEvent)
+  app.post(deps.config.callbackPaths.refund, handleProviderEvent)
 
   app.get(deps.config.returnPath, async (request, reply) => {
     reply.header("Cache-Control", "no-store")
@@ -584,16 +540,4 @@ export const buildServer = (deps: Deps): FastifyInstance => {
   })
 
   return app
-}
-
-const routeEventTo = (
-  merchantOrderId: string | null,
-  runtimes: readonly CallerRuntime[],
-): string => {
-  const fallback = runtimes[0]?.caller.service ?? ""
-  if (merchantOrderId === null) return fallback
-  for (const runtime of runtimes) {
-    if (merchantOrderId.startsWith(`${runtime.caller.service}_`)) return runtime.caller.service
-  }
-  return fallback
 }

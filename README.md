@@ -115,12 +115,16 @@ does name-based routing for every hostname on the box in one place.
 That means the config actually serving `beonedge.in` lives on the VPS, at
 `/srv/dev_stack/BOE_LANDING/nginx/boe-landing.conf` (installed to
 `/etc/nginx/sites-available/boe-landing`, with its headers snippet in
-`/etc/nginx/snippets/`), and **not in this repository**. It reproduces what
+`/etc/nginx/snippets/`). The tracked deployment candidate is
+`nginx/boe-landing.conf`. It reproduces what
 `nginx/` does here — CF-Connecting-IP real_ip, the signup limit with the JSON 429,
 security headers — against the host's shared zones.
 
-So `nginx/` in this repo is for local work and for any future directly-addressed
-deployment. Editing it does not change production; editing the host vhost does.
+`nginx/vhost.conf` remains the bundled container configuration.
+`nginx/boe-landing.conf` is the host configuration for the VPS. Editing either
+file does not change the running host nginx. See
+[the callback cutover guide](release_manager/CALLBACK_CUTOVER.md) for the deployment
+order and required payment-service configuration.
 
 ## The one integration with the app stack
 

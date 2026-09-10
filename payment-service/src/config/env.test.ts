@@ -10,7 +10,7 @@ const callers = (
   JSON.stringify(entries.map((entry) => ({
     service: entry.service,
     secret: SECRET,
-    eventsUrl: "https://dev-app.beonedge.in/api/v1/internal/payment-events",
+    callbackBaseUrl: `https://${entry.service === "boe-prod" ? "app" : "dev-app"}.beonedge.in/api/v1/provider-events/phonepe`,
     returnUrl: entry.returnUrl,
     phonepeEnv: "production",
   })))
@@ -68,5 +68,29 @@ describe("caller return destinations", () => {
     expect(() => loadConfig(env(
       callers([{ service: "boe-dev", returnUrl: "https://user:pass@dev-app.beonedge.in/pay/return" }]),
     ))).toThrow()
+  })
+})
+
+
+describe("callback destinations", () => {
+  const valid = { service: "boe-prod", secret: SECRET, callbackBaseUrl: "https://app.beonedge.in/api/v1/provider-events/phonepe", returnUrl: "https://app.beonedge.in/pay/return", phonepeEnv: "production" }
+
+  it("loads the canonical backend callback base and all ingress paths", () => {
+    const loaded = loadConfig(env(JSON.stringify([valid])))
+    expect(loaded.callers.get("boe-prod")?.callbackBaseUrl).toBe(valid.callbackBaseUrl)
+    expect(loaded.callbackPaths.refund).toBe("/api/v1/provider-events/phonepe/refund")
+  })
+
+  it.each([
+    "https://dev-app.beonedge.in/api/v1/provider-events/phonepe", "https://evil.test/api/v1/provider-events/phonepe", "https://app.beonedge.in:8443/api/v1/provider-events/phonepe",
+    "http://app.beonedge.in/api/v1/provider-events/phonepe", "https://user:pass@app.beonedge.in/api/v1/provider-events/phonepe",
+    "https://app.beonedge.in/api/v1/internal/payment-events", "https://app.beonedge.in/api/v1/provider-events/phonepe/",
+    "https://app.beonedge.in/api/v1/provider-events/phonepe?target=dev", "https://app.beonedge.in/api/v1/provider-events/phonepe#fragment",
+  ])("refuses unsafe or noncanonical callback destination %s", (callbackBaseUrl) => {
+    expect(() => loadConfig(env(JSON.stringify([{ ...valid, callbackBaseUrl }])))).toThrow()
+  })
+
+  it.each(["BOE", "service_with_underscore", "service-name-too-long"])("rejects service names that cannot fit merchant references %s", (service) => {
+    expect(() => loadConfig(env(JSON.stringify([{ ...valid, service }])))).toThrow()
   })
 })

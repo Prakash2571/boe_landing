@@ -13,8 +13,8 @@ release_manager/deploy.sh --help     everything else
 ## What a full deploy does
 
 1. **Gates, locally** — `tsc --noEmit`, `next lint`, `vitest run`, `next build`. Also runs the
-   payment service's own typecheck and tests if that directory exists, as a warning rather than a
-   failure, because it is not deployed by default.
+   payment service's own typecheck and tests if that directory exists. A failure blocks deployment
+   because the service owns payment callback routing.
 2. **Push** — shows the unpushed commits and asks before pushing.
 3. **Pull on the VPS** — `git pull --ff-only`, so a diverged checkout stops rather than merges.
    Untracked files on the VPS, including `docker-compose.override.yml`, are left alone.

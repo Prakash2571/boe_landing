@@ -17,7 +17,7 @@ const NOW = 1_800_000_000_000
 const caller: CallerConfig = Object.freeze({
   service: "boe-dev",
   secret: SECRET,
-  eventsUrl: "https://dev-app.beonedge.in/api/v1/internal/payment-events",
+  callbackBaseUrl: "https://dev-app.beonedge.in/api/v1/provider-events/phonepe",
   returnUrl: "https://dev-app.beonedge.in/dashboard",
   phonepeEnv: "production",
 })
